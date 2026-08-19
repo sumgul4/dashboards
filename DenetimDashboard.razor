@@ -1,332 +1,106 @@
 @page "/denetim-dashboard"
 @using Denetim.Dashboard
 @using DevExpress.Blazor
+@implements IDisposable
 @inject DenetimRepository Repo
 
-@* ------------------------------------------------------------------
+@* ==================================================================================
    Denetim Raporlama Panosu — Power BI raporunun Blazor Server karşılığı
-   DevExpress Blazor v25.2
-   ------------------------------------------------------------------ *@
+   DevExpress Blazor v25.2 · .NET 10
 
-<div class="rp-app">
+   ---- v2'DE DÜZELTİLEN DERLEME HATALARI -------------------------------------------
+   1) CS0841 "Cannot use local variable 'RenderAnasayfa' before it is declared"
+      Sebep: RenderAnasayfa/RenderGenelBakis/... birer YEREL DEĞİŞKEN'di
+      (RenderFragment X = @@<text>...) ve markup'tan SONRA gelen @@{ } bloğunda
+      tanımlanmıştı. Razor tüm dosyayı tek bir BuildRenderTree metodu olarak
+      derler; C#'ta bir yerel değişken bildiriminden önce kullanılamaz.
+      RenderProjeksiyon(...) hata vermiyordu, çünkü o bir YEREL FONKSİYON'du —
+      yerel fonksiyonlar bildirimden önce çağrılabilir.
+      Çözüm: hepsi yerel fonksiyona çevrildi VE blok markup'tan önceye alındı.
+      (Kullanım da @@RenderAnasayfa yerine @@RenderAnasayfa() oldu.)
 
-    @* ÜST BAŞLIK *@
-    <header class="rp-header">
-        <div class="rp-brand">
-            <div class="rp-logo">D3</div>
-            <div class="rp-brand-text">
-                <span>Denetim · Danışmanlık</span>
-                <span class="muted">Dönüşüm</span>
-            </div>
-        </div>
-        <div class="rp-header-main">
-            <div>
-                <div class="rp-kicker">@PageKicker</div>
-                <h1 class="rp-title">@PageTitle</h1>
-            </div>
-            <div class="rp-header-actions">
-                <span class="rp-refresh">Son yenileme @DateTime.Now.ToString("dd.MM.yyyy HH:mm")</span>
-                <DxButton RenderStyle="ButtonRenderStyle.None" CssClass="rp-btn-outline"
-                          Text="Filtreleri sıfırla" Click="ResetFilters" />
-                <DxButton RenderStyle="ButtonRenderStyle.None" CssClass="rp-btn-accent"
-                          Text="@(filtersOpen ? "Filtreleri gizle" : "Filtreler")"
-                          Click="@(() => filtersOpen = !filtersOpen)" />
-            </div>
-        </div>
-    </header>
+   2) CS1503 "Argument 1: cannot convert from 'method group' to ChartElementFormat"
+      Sebep: ChartElementFormat.Percent bir SABİT değil, statik bir FABRİKA
+      METODU. Parantezsiz yazıldığında ifade bir "method group" olur.
+      Çözüm: Format="@@(ChartElementFormat.Percent(1))"
+      (Projenizde Percent(int) aşırı yüklemesi yoksa Percent() olarak yazın.)
 
-    <div class="rp-body">
+   3) CS0103 "The name 'DashStyle' does not exist in the current context"
+      Sebep: DxChartLineSeries üzerindeki DashStyle PARAMETRESİ var (VS onu
+      kırmızı işaretlemedi), sorunlu olan DEĞER ifadesi: 'DashStyle' adlı tip
+      @@using DevExpress.Blazor kapsamında bulunamıyor.
+      Çözüm: parametre şimdilik kaldırıldı; Plan/Gerçekleşen ayrımı renkle
+      yapılıyor. Kesir çizgisini geri eklemek isterseniz doğru tip adını
+      3 saniyede bulmanın yolu: DashStyle="" içine imleci koyup Ctrl+Space,
+      veya DashStyle parametresinin üzerinde F12. En olası iki aday:
+        DashStyle="System.Drawing.Drawing2D.DashStyle.Dash"
+        DashStyle="ChartDashStyle.Dash"
+      Doğru adı bulunca 'PROJEKSİYON' bölümündeki yorumlu satırı açın.
 
-        @* SOL RAY — KPI kartları + dilimleyiciler *@
-        <aside class="rp-rail">
-            @foreach (var kpi in Kpis)
-            {
-                <div class="rp-kpi">
-                    <div class="rp-kpi-label">@kpi.Label</div>
-                    <div class="rp-kpi-value">
-                        @kpi.Value
-                        @if (!string.IsNullOrEmpty(kpi.Delta))
-                        {
-                            <span class="rp-kpi-delta">@kpi.Delta</span>
-                        }
-                    </div>
-                </div>
-            }
+   ---- v2'DE YAPILAN PERFORMANS DÜZELTMELERİ ---------------------------------------
+   • Filtrelenmiş veri artık her render'da yeniden hesaplanmıyor. Eskiden
+     FilteredSubeler / FilteredPlanRows / Kpis / AksiyonDurumu birer computed
+     property'ydi; her render'da YENİ bir nesne referansı üretiyorlardı ve
+     DxGrid/DxChart bunu "veri kaynağı değişti" olarak görüp tamamen yeniden
+     yükleniyordu. Şimdi tek giriş noktası LoadAsync(); yalnız filtre/sayfa
+     değişince çalışır. (Veritabanına geçince bu, "her render'da sorgu"
+     ile "filtre başına bir sorgu" arasındaki fark demek.)
+   • @@FilteredSubeler.Count() LINQ sorgusunu ikinci kez dolaşıyordu (grid ile
+     birlikte toplam 2 kez). Artık materialize edilmiş listenin .Count'u.
+   • Arama kutusu BindValueMode.OnInput ile her tuş vuruşunda tüm sayfayı
+     (tüm grafikler + grid + treemap JS interop) yeniden render ediyordu.
+     Artık OnDelayedInput + InputDelay.
+   • Enum.GetValues / new[] { "2025", "2026" } gibi diziler her render'da
+     yeniden ayrılıyordu; static readonly alanlara taşındı.
+   • @@foreach döngülerine @@key eklendi (Blazor diff maliyeti).
+   • Treemap tıklamasındaki gereksiz StateHasChanged() kaldırıldı —
+     EventCallback tetiklendiğinde Blazor zaten render ediyor (çift render).
+   • ProjeksiyonKpis() artık Last(...) yerine LastOrDefault + sıfıra bölme
+     koruması kullanıyor (gerçek veriyle "hiç gerçekleşme yok" hâli olacak).
+   • DateTime.Now markup içindeydi, her render'da değişiyordu → alan.
+   • CancellationTokenSource eklendi: hızlı filtre değişiminde uçuşan
+     sorgular iptal edilebilir (DB aşaması için hazır).
 
-            <div class="rp-rail-divider"></div>
+   NOT: TODO(db) ile işaretli yerler türetilmiş/uydurma değerlerdir.
+   Gerçek veriye geçerken yalnızca LoadAsync() ve bu işaretler değişir.
+   ================================================================================== *@
 
-            @if (ShowPlanSlicer)
-            {
-                <div class="rp-slicer">
-                    <div class="rp-slicer-label">Plan Yılı</div>
-                    <div class="rp-slicer-group">
-                        @foreach (var y in new[] { "2025", "2026" })
-                        {
-                            <button class="@SlicerCss(planYears.Contains(y))" @onclick="() => TogglePlanYear(y)">@y</button>
-                        }
-                    </div>
-                </div>
-            }
-
-            @if (ShowPortfoySlicer)
-            {
-                <div class="rp-slicer">
-                    <div class="rp-slicer-label">Portföy</div>
-                    <div class="rp-slicer-group">
-                        @foreach (var p in new[] { "Tümü", "BSD", "GMD", "KBD" })
-                        {
-                            <button class="@SlicerCss(portfoy == p)" @onclick="() => portfoy = p">@p</button>
-                        }
-                    </div>
-                </div>
-            }
-
-            @if (ShowRiskSlicer)
-            {
-                <div class="rp-slicer">
-                    <div class="rp-slicer-label">Risk Seviyesi</div>
-                    <div class="rp-slicer-group">
-                        @foreach (var r in Enum.GetValues<RiskLevel>())
-                        {
-                            <button class="@SlicerCss(riskLevels.Contains(r))" @onclick="() => ToggleRisk(r)">@RiskName(r)</button>
-                        }
-                    </div>
-                </div>
-            }
-
-            <div class="rp-rail-note">@RailFootnote</div>
-        </aside>
-
-        @* TUVAL — sayfaya göre görseller *@
-        <main class="rp-canvas">
-            @switch (page)
-            {
-                case DashboardPage.Anasayfa:
-                    @RenderAnasayfa
-                    break;
-                case DashboardPage.GenelBakis:
-                    @RenderGenelBakis
-                    break;
-                case DashboardPage.BulgularAksiyonlar:
-                    @RenderBulgular
-                    break;
-                case DashboardPage.AksiyonProjeksiyon:
-                    @RenderProjeksiyon(Repo.AksiyonProjeksiyon, "Aksiyon")
-                    break;
-                case DashboardPage.BulguProjeksiyon:
-                    @RenderProjeksiyon(Repo.BulguProjeksiyon, "Bulgu")
-                    break;
-                case DashboardPage.Subeler:
-                    @RenderSubeler
-                    break;
-            }
-        </main>
-
-        @* SAĞ FİLTRE PANELİ *@
-        @if (filtersOpen)
-        {
-            <aside class="rp-filters">
-                <div class="rp-filters-head">
-                    <h3>Filtreler</h3>
-                    <DxButton RenderStyle="ButtonRenderStyle.None" CssClass="rp-btn-link"
-                              Text="Kapat" Click="@(() => filtersOpen = false)" />
-                </div>
-
-                <DxTextBox @bind-Text="search" NullText="Ara" CssClass="rp-search" BindValueMode="BindValueMode.OnInput" />
-
-                <div class="rp-filter-group">
-                    <div class="rp-filter-label">Risk Seviyesi</div>
-                    @foreach (var r in Enum.GetValues<RiskLevel>())
-                    {
-                        <button class="@FilterCss(riskLevels.Contains(r))" @onclick="() => ToggleRisk(r)">
-                            <span>@RiskName(r)</span>
-                            <span class="rp-count">@RiskCount(r)</span>
-                        </button>
-                    }
-                </div>
-
-                <div class="rp-filter-group">
-                    <div class="rp-filter-label">Denetim Türü</div>
-                    @foreach (var t in Repo.DenetimTuru)
-                    {
-                        <button class="@FilterCss(denetimTuru == t.Label)" @onclick="() => ToggleDenetimTuru(t.Label)">
-                            <span>@t.Label</span>
-                            <span class="rp-count">@t.Value</span>
-                        </button>
-                    }
-                </div>
-
-                <div class="rp-filter-group">
-                    <div class="rp-filter-label">Plan Yılı</div>
-                    @foreach (var row in Repo.PlanYiliBulgu)
-                    {
-                        <button class="@FilterCss(planYears.Contains(row.Label))" @onclick="() => TogglePlanYear(row.Label)">
-                            <span>@row.Label</span>
-                            <span class="rp-count">@row.Total</span>
-                        </button>
-                    }
-                </div>
-            </aside>
-        }
-    </div>
-
-    @* ALT SAYFA SEKMELERİ — Power BI page tabs *@
-    <nav class="rp-tabs">
-        @foreach (var (p, label) in Tabs)
-        {
-            <button class="@(page == p ? "rp-tab rp-tab-active" : "rp-tab")" @onclick="() => page = p">@label</button>
-        }
-    </nav>
-</div>
-
-@* ================= SAYFA ŞABLONLARI ================= *@
-
-@code {
-    // ---------- durum ----------
-    DashboardPage page = DashboardPage.GenelBakis;
-    HashSet<string> planYears = new() { "2025", "2026" };
-    HashSet<RiskLevel> riskLevels = new() { RiskLevel.Dusuk, RiskLevel.Orta, RiskLevel.Yuksek };
-    string portfoy = "Tümü";
-    string? denetimTuru;
-    string search = string.Empty;
-    bool filtersOpen = true;
-
-    static readonly (DashboardPage, string)[] Tabs = new[]
-    {
-        (DashboardPage.Anasayfa, "Anasayfa"),
-        (DashboardPage.GenelBakis, "2026 2Ç Genel Bakış (BSD-GMD)"),
-        (DashboardPage.BulgularAksiyonlar, "2026 2Ç Bulgular ve Aksiyonlar"),
-        (DashboardPage.AksiyonProjeksiyon, "2026 2Ç Aksiyon Kapama Projeksiyonu"),
-        (DashboardPage.BulguProjeksiyon, "2026 2Ç Bulgu Kapanma Projeksiyonu"),
-        (DashboardPage.Subeler, "2026 2Ç Şubeler (Kredi-OpRisk)")
-    };
-
-    // ---------- filtre yardımcıları ----------
-    void TogglePlanYear(string y)
-    {
-        if (!planYears.Add(y) && planYears.Count > 1) planYears.Remove(y);
-    }
-    void ToggleRisk(RiskLevel r)
-    {
-        if (!riskLevels.Add(r) && riskLevels.Count > 1) riskLevels.Remove(r);
-    }
-    void ToggleDenetimTuru(string t) => denetimTuru = denetimTuru == t ? null : t;
-    void ResetFilters()
-    {
-        planYears = new() { "2025", "2026" };
-        riskLevels = new() { RiskLevel.Dusuk, RiskLevel.Orta, RiskLevel.Yuksek };
-        portfoy = "Tümü"; denetimTuru = null; search = string.Empty;
-    }
-
-    static string RiskName(RiskLevel r) => r switch
-    {
-        RiskLevel.Yuksek => "Yüksek",
-        RiskLevel.Orta => "Orta",
-        _ => "Düşük"
-    };
-    int RiskCount(RiskLevel r) => Repo.PlanYiliBulgu.Sum(x => r switch
-    {
-        RiskLevel.Yuksek => x.Yuksek,
-        RiskLevel.Orta => x.Orta,
-        _ => x.Dusuk
-    });
-
-    // seçili → beyaz dolgu, seçili değil → içi boş
-    static string SlicerCss(bool active) => active ? "rp-chip rp-chip-on" : "rp-chip";
-    static string FilterCss(bool active) => active ? "rp-filter-item rp-filter-on" : "rp-filter-item";
-
-    bool ShowPlanSlicer => page != DashboardPage.Subeler;
-    bool ShowPortfoySlicer => page is DashboardPage.GenelBakis or DashboardPage.AksiyonProjeksiyon or DashboardPage.BulguProjeksiyon;
-    bool ShowRiskSlicer => page is DashboardPage.Subeler or DashboardPage.BulgularAksiyonlar;
-
-    // ---------- filtrelenmiş veri ----------
-    IEnumerable<StackedRow> FilteredPlanRows => Repo.PlanYiliBulgu.Where(r => planYears.Contains(r.Label));
-    int BulguToplam => FilteredPlanRows.Sum(r =>
-        (riskLevels.Contains(RiskLevel.Dusuk) ? r.Dusuk : 0) +
-        (riskLevels.Contains(RiskLevel.Orta) ? r.Orta : 0) +
-        (riskLevels.Contains(RiskLevel.Yuksek) ? r.Yuksek : 0));
-    int RaporToplam => planYears.Count == 2 ? 21 : (planYears.Contains("2026") ? 18 : 3);
-
-    IEnumerable<SubeRow> FilteredSubeler => Repo.Subeler
-        .Where(s => denetimTuru == null || s.DenetimTuru == denetimTuru)
-        .Where(s => riskLevels.Contains(s.Risk))
-        .Where(s => string.IsNullOrWhiteSpace(search) ||
-                    (s.DenetimTuru + " " + s.SubeAdi).Contains(search, StringComparison.CurrentCultureIgnoreCase));
-
-    // ---------- başlıklar ----------
-    string PageKicker => page switch
-    {
-        DashboardPage.Subeler => "Kredi · OpRisk · İklim İç Ortam — 2026 2. Çeyrek",
-        DashboardPage.Anasayfa => "Denetim Danışmanlık Dönüşüm — Raporlama Portalı",
-        _ => "BSD · GMD · İştirakler — 2026 2. Çeyrek"
-    };
-    string PageTitle => page switch
-    {
-        DashboardPage.Anasayfa => "Anasayfa",
-        DashboardPage.GenelBakis => "Bilgi Sistemleri, Genel Müdürlük ve İştirakler",
-        DashboardPage.BulgularAksiyonlar => "Bulgular ve Aksiyonlar",
-        DashboardPage.AksiyonProjeksiyon => "Aksiyon Kapama Projeksiyonu",
-        DashboardPage.BulguProjeksiyon => "Bulgu Kapanma Projeksiyonu",
-        _ => "Şubeler — Tamamlanan Denetimler"
-    };
-    string RailFootnote => page == DashboardPage.Subeler
-        ? "*İklim ve İç Ortam denetimlerinde bulgu bulunmaması nedeniyle, ilgili filtreleme sonucunda tabloda veri görüntülenmeyebilir."
-        : "Kaynak: Denetim Takip Sistemi · Plan Yılı ve Portföy dilimleyicileri tüm görselleri etkiler.";
-
-    List<KpiItem> Kpis => page switch
-    {
-        DashboardPage.Subeler => new()
-        {
-            new("Denetlenen Şube Sayısı", "89"),
-            new("Tamamlanan Rapor Sayısı", "89"),
-            new("Toplam Bulgu Sayısı*", SubeBulguToplam.ToString("N0"),
-                SubeBulguToplam != 201 ? "filtreli" : null)
-        },
-        DashboardPage.BulgularAksiyonlar => new()
-        {
-            new("Bulgu Sayısı", BulguToplam.ToString("N0")),
-            new("Aksiyon Sayısı", ((int)(BulguToplam * 1.34)).ToString("N0")),
-            new("Kapanan Aksiyon", "96"),
-            new("Açık Aksiyon", "109")
-        },
-        DashboardPage.AksiyonProjeksiyon or DashboardPage.BulguProjeksiyon => ProjeksiyonKpis(),
-        DashboardPage.Anasayfa => new()
-        {
-            new("Tamamlanan Rapor", "110", "2026 2Ç"),
-            new("Toplam Bulgu", "354"),
-            new("Açık Aksiyon", "109")
-        },
-        _ => new()
-        {
-            new("Tamamlanan Rapor Sayısı", RaporToplam.ToString("N0")),
-            new("Bulgu Sayısı", BulguToplam.ToString("N0"), BulguToplam != 153 ? "filtreli" : null),
-            new("Aksiyon Sayısı", ((int)(BulguToplam * 1.34)).ToString("N0"))
-        }
-    };
-
-    int SubeBulguToplam => Repo.SubeBulguSeviyeleri
-        .Where(c => riskLevels.Any(r => RiskName(r) == c.Label))
-        .Sum(c => (int)c.Value);
-
-    List<KpiItem> ProjeksiyonKpis()
-    {
-        var src = page == DashboardPage.AksiyonProjeksiyon ? Repo.AksiyonProjeksiyon : Repo.BulguProjeksiyon;
-        var son = src.Last(p => p.Gercek.HasValue);
-        return new()
-        {
-            new("Planlanan Kapanış", src.Last().Plan.ToString("N0")),
-            new("Gerçekleşen", son.Gercek!.Value.ToString("N0"), $"{(double)son.Gercek / son.Plan:P1} hedef"),
-            new("Sapma", (son.Gercek - son.Plan)!.Value.ToString("N0"), son.Gercek < son.Plan ? "gecikme" : "ileride")
-        };
-    }
-}
-
-@* ---------- GENEL BAKIŞ ---------- *@
 @{
-    RenderFragment RenderGenelBakis =@<text>
+    // ==============================================================================
+    // SAYFA ŞABLONLARI — YEREL FONKSİYON (local function).
+    // Yerel fonksiyon oldukları için bildirim sırası önemsizdir; ayrıca bu blok
+    // markup'tan önce geldiği için CS0841 kesin olarak ortadan kalkar.
+    // ==============================================================================
+
+    // ---- TreeMap sarmalayıcı -------------------------------------------------------
+    // DevExtreme dxTreeMap'e geçmek için tek satır: <ApexTreeMap> → <DevExtremeTreeMap>
+    RenderFragment TreemapVisual(List<CategoryValue> data, string? selected, Func<string, Task> onCellClick) => @<text>
+        <div class="rp-treemap">
+            <ApexTreeMap Data="data" Selected="selected" OnCellClick="@(label => onCellClick(label))" />
+        </div>
+    </text>;
+
+    // ---- ANASAYFA -----------------------------------------------------------------
+    RenderFragment RenderAnasayfa() => @<text>
+        <section class="rp-card rp-span-12">
+            <div class="rp-card-head"><h3>Raporlar</h3><span>@(Tabs.Length - 1) sayfa</span></div>
+            <div class="rp-tiles">
+                @foreach (var (p, label) in Tabs.Skip(1))
+                {
+                    <button @key="p" class="rp-tile" @onclick="() => SetPageAsync(p)">
+                        <span class="rp-tile-kicker">@(p == DashboardPage.Subeler ? "Kredi · OpRisk" : "BSD · GMD")</span>
+                        <span class="rp-tile-title">@label</span>
+                    </button>
+                }
+            </div>
+        </section>
+    </text>;
+
+    // ---- GENEL BAKIŞ --------------------------------------------------------------
+    RenderFragment RenderGenelBakis() => @<text>
         <section class="rp-card rp-span-3">
-            <div class="rp-card-head"><h3>Portföy Dağılımı</h3><span>Rapor</span></div>
-            @TreemapVisual(Repo.Portfoy, label => portfoy = label)
+            <div class="rp-card-head"><h3>Portföy Dağılımı</h3><span>@(portfoy == TumuText ? "Rapor" : portfoy)</span></div>
+            @TreemapVisual(Repo.Portfoy, portfoy == TumuText ? null : portfoy, SetPortfoyAsync)
         </section>
 
         <section class="rp-card rp-span-4">
@@ -335,9 +109,13 @@
                 <DxPieChartSeries ValueField="@((CategoryValue c) => c.Value)"
                                   ArgumentField="@(c => c.Label)"
                                   SummaryMethod="Enumerable.Sum">
-                    <DxChartSeriesLabel Visible="true" Position="RelativePosition.Outside" Format="ChartElementFormat.Percent" />
+                    @* DÜZELTME 2: Percent bir metottur → Percent(1). Aşırı yükleme yoksa Percent() *@
+                    <DxChartSeriesLabel Visible="true"
+                                        Position="RelativePosition.Outside"
+                                        Format="@(ChartElementFormat.Percent(1))" />
                 </DxPieChartSeries>
-                <DxChartLegend Position="RelativePosition.Outside" HorizontalAlignment="HorizontalAlignment.Center"
+                <DxChartLegend Position="RelativePosition.Outside"
+                               HorizontalAlignment="HorizontalAlignment.Center"
                                VerticalAlignment="VerticalEdge.Bottom" />
                 <DxChartPalette PaletteName="ChartPalette.Custom" Colors="RaporGorusRenkleri" />
             </DxPieChart>
@@ -345,24 +123,24 @@
 
         <section class="rp-card rp-span-5">
             <div class="rp-card-head"><h3>Denetim Plan Yılı ve Bulgu Seviyesi</h3><span>Bulgu sayısı</span></div>
-            <DxChart Data="FilteredPlanRows" CssClass="rp-viz" Rotated="true">
+            <DxChart Data="planRows" CssClass="rp-viz" Rotated="true">
                 @if (riskLevels.Contains(RiskLevel.Dusuk))
                 {
-                    <DxChartStackedBarSeries Name="Düşük" Color="System.Drawing.Color.FromArgb(0x12, 0xa3, 0xa0)"
+                    <DxChartStackedBarSeries Name="Düşük" Color="TealColor"
                                              ArgumentField="@((StackedRow r) => r.Label)" ValueField="@(r => r.Dusuk)">
                         <DxChartSeriesLabel Visible="true" />
                     </DxChartStackedBarSeries>
                 }
                 @if (riskLevels.Contains(RiskLevel.Orta))
                 {
-                    <DxChartStackedBarSeries Name="Orta" Color="System.Drawing.Color.FromArgb(0xe8, 0x85, 0x3c)"
+                    <DxChartStackedBarSeries Name="Orta" Color="OrangeColor"
                                              ArgumentField="@((StackedRow r) => r.Label)" ValueField="@(r => r.Orta)">
                         <DxChartSeriesLabel Visible="true" />
                     </DxChartStackedBarSeries>
                 }
                 @if (riskLevels.Contains(RiskLevel.Yuksek))
                 {
-                    <DxChartStackedBarSeries Name="Yüksek" Color="System.Drawing.Color.FromArgb(0xc0, 0x00, 0x00)"
+                    <DxChartStackedBarSeries Name="Yüksek" Color="RedColor"
                                              ArgumentField="@((StackedRow r) => r.Label)" ValueField="@(r => r.Yuksek)">
                         <DxChartSeriesLabel Visible="true" />
                     </DxChartStackedBarSeries>
@@ -391,13 +169,67 @@
         </section>
     </text>;
 
-    RenderFragment RenderSubeler =@<text>
+    // ---- BULGULAR VE AKSİYONLAR ---------------------------------------------------
+    RenderFragment RenderBulgular() => @<text>
+        <section class="rp-card rp-span-6">
+            <div class="rp-card-head"><h3>Sürece Göre Bulgu Dağılımı</h3><span>Bulgu sayısı</span></div>
+            <DxChart Data="Repo.BulguSurec" CssClass="rp-viz" Rotated="true">
+                <DxChartBarSeries ArgumentField="@((CategoryValue c) => c.Label)" ValueField="@(c => c.Value)"
+                                  Color="BlueColor">
+                    <DxChartSeriesLabel Visible="true" />
+                </DxChartBarSeries>
+                <DxChartLegend Visible="false" />
+            </DxChart>
+        </section>
+
+        <section class="rp-card rp-span-6">
+            <div class="rp-card-head"><h3>Aksiyon Durumu</h3><span>Aksiyon sayısı</span></div>
+            <DxPieChart Data="AksiyonDurumu" CssClass="rp-viz" Type="PieChartType.Donut">
+                <DxPieChartSeries ValueField="@((CategoryValue c) => c.Value)" ArgumentField="@(c => c.Label)"
+                                  SummaryMethod="Enumerable.Sum" />
+                <DxChartLegend Position="RelativePosition.Outside" VerticalAlignment="VerticalEdge.Bottom" />
+                <DxChartPalette PaletteName="ChartPalette.Custom" Colors="AksiyonDurumRenkleri" />
+            </DxPieChart>
+        </section>
+    </text>;
+
+    // ---- PROJEKSİYON (Aksiyon / Bulgu) --------------------------------------------
+    RenderFragment RenderProjeksiyon(List<ProjectionPoint> data, string tur) => @<text>
+        <section class="rp-card rp-span-8">
+            <div class="rp-card-head"><h3>Kümülatif Kapanış Eğrisi</h3><span>Temmuz — Aralık 2026</span></div>
+            <DxChart Data="data" CssClass="rp-viz">
+                @* DÜZELTME 3: DashStyle kaldırıldı (CS0103). Doğru tip adını bulunca
+                   aşağıdaki Plan serisine geri ekleyin, örn:
+                   DashStyle="System.Drawing.Drawing2D.DashStyle.Dash" *@
+                <DxChartLineSeries Name="Plan" ArgumentField="@((ProjectionPoint p) => p.Ay)" ValueField="@(p => p.Plan)"
+                                   Color="GrayLineColor" />
+                <DxChartLineSeries Name="Gerçekleşen" ArgumentField="@((ProjectionPoint p) => p.Ay)" ValueField="@(p => p.Gercek)"
+                                   Color="BlueColor" />
+                <DxChartLegend Position="RelativePosition.Outside" VerticalAlignment="VerticalEdge.Bottom"
+                               HorizontalAlignment="HorizontalAlignment.Left" />
+            </DxChart>
+        </section>
+
+        <section class="rp-card rp-span-4">
+            <div class="rp-card-head"><h3>Termin Takibi</h3><span>@tur</span></div>
+            <DxGrid Data="data" CssClass="rp-grid">
+                <Columns>
+                    <DxGridDataColumn FieldName="Ay" Caption="Ay" />
+                    <DxGridDataColumn FieldName="Plan" Caption="Plan (kümülatif)" TextAlignment="GridTextAlignment.Right" />
+                    <DxGridDataColumn FieldName="Gercek" Caption="Gerçekleşen" TextAlignment="GridTextAlignment.Right" />
+                </Columns>
+            </DxGrid>
+        </section>
+    </text>;
+
+    // ---- ŞUBELER ------------------------------------------------------------------
+    RenderFragment RenderSubeler() => @<text>
         <section class="rp-card rp-span-5">
             <div class="rp-card-head">
                 <h3>Denetim Türü Dağılımı</h3>
-                <span>@(denetimTuru ?? "Tümü")</span>
+                <span>@(denetimTuru ?? TumuText)</span>
             </div>
-            @TreemapVisual(Repo.DenetimTuru, label => ToggleDenetimTuru(label))
+            @TreemapVisual(Repo.DenetimTuru, denetimTuru, ToggleDenetimTuruAsync)
         </section>
 
         <section class="rp-card rp-span-4">
@@ -416,7 +248,7 @@
             <div class="rp-card-head"><h3>Bulgu Seviyeleri</h3><span>Bulgu sayısı</span></div>
             <DxChart Data="Repo.SubeBulguSeviyeleri" CssClass="rp-viz" Rotated="true">
                 <DxChartBarSeries ArgumentField="@((CategoryValue c) => c.Label)" ValueField="@(c => c.Value)"
-                                  Color="System.Drawing.Color.FromArgb(0x12, 0xa3, 0xa0)">
+                                  Color="TealColor">
                     <DxChartSeriesLabel Visible="true" />
                 </DxChartBarSeries>
                 <DxChartLegend Visible="false" />
@@ -424,8 +256,9 @@
         </section>
 
         <section class="rp-card rp-span-12">
-            <div class="rp-card-head"><h3>Denetlenen Şubeler</h3><span>@FilteredSubeler.Count() kayıt</span></div>
-            <DxGrid Data="FilteredSubeler" CssClass="rp-grid" VirtualScrollingEnabled="true" ShowFilterRow="false">
+            <div class="rp-card-head"><h3>Denetlenen Şubeler</h3><span>@subeler.Count kayıt</span></div>
+            @* subeler materialize edilmiş List'tir: grid veri kaynağını her render'da yeniden okumaz *@
+            <DxGrid Data="subeler" CssClass="rp-grid" VirtualScrollingEnabled="true" ShowFilterRow="false">
                 <Columns>
                     <DxGridDataColumn FieldName="DenetimTuru" Caption="Denetim Türü" />
                     <DxGridDataColumn FieldName="SubeAdi" Caption="Şube Adı" />
@@ -435,92 +268,488 @@
             <p class="rp-note">*İklim ve İç Ortam denetimlerinde bulgu bulunmadığı için risk seviyesi filtresi bu satırları gizleyebilir.</p>
         </section>
     </text>;
-
-    RenderFragment RenderBulgular =@<text>
-        <section class="rp-card rp-span-6">
-            <div class="rp-card-head"><h3>Sürece Göre Bulgu Dağılımı</h3><span>Bulgu sayısı</span></div>
-            <DxChart Data="Repo.BulguSurec" CssClass="rp-viz" Rotated="true">
-                <DxChartBarSeries ArgumentField="@((CategoryValue c) => c.Label)" ValueField="@(c => c.Value)"
-                                  Color="System.Drawing.Color.FromArgb(0x22, 0x22, 0xc8)">
-                    <DxChartSeriesLabel Visible="true" />
-                </DxChartBarSeries>
-                <DxChartLegend Visible="false" />
-            </DxChart>
-        </section>
-
-        <section class="rp-card rp-span-6">
-            <div class="rp-card-head"><h3>Aksiyon Durumu</h3><span>Aksiyon sayısı</span></div>
-            <DxPieChart Data="AksiyonDurumu" CssClass="rp-viz" Type="PieChartType.Donut">
-                <DxPieChartSeries ValueField="@((CategoryValue c) => c.Value)" ArgumentField="@(c => c.Label)"
-                                  SummaryMethod="Enumerable.Sum" />
-                <DxChartLegend Position="RelativePosition.Outside" VerticalAlignment="VerticalEdge.Bottom" />
-                <DxChartPalette PaletteName="ChartPalette.Custom" Colors="AksiyonDurumRenkleri" />
-            </DxPieChart>
-        </section>
-    </text>;
-
-    RenderFragment RenderAnasayfa =@<text>
-        <section class="rp-card rp-span-12">
-            <div class="rp-card-head"><h3>Raporlar</h3><span>5 sayfa</span></div>
-            <div class="rp-tiles">
-                @foreach (var (p, label) in Tabs.Skip(1))
-                {
-                    <button class="rp-tile" @onclick="() => page = p">
-                        <span class="rp-tile-kicker">@(p == DashboardPage.Subeler ? "Kredi · OpRisk" : "BSD · GMD")</span>
-                        <span class="rp-tile-title">@label</span>
-                    </button>
-                }
-            </div>
-        </section>
-    </text>;
-
-    RenderFragment RenderProjeksiyon(List<ProjectionPoint> data, string tur) =@<text>
-        <section class="rp-card rp-span-8">
-            <div class="rp-card-head"><h3>Kümülatif Kapanış Eğrisi</h3><span>Temmuz — Aralık 2026</span></div>
-            <DxChart Data="data" CssClass="rp-viz">
-                <DxChartLineSeries Name="Plan" ArgumentField="@((ProjectionPoint p) => p.Ay)" ValueField="@(p => p.Plan)"
-                                   Color="System.Drawing.Color.FromArgb(0x8c, 0x8c, 0x8c)" DashStyle="DashStyle.Dash" />
-                <DxChartLineSeries Name="Gerçekleşen" ArgumentField="@((ProjectionPoint p) => p.Ay)" ValueField="@(p => p.Gercek)"
-                                   Color="System.Drawing.Color.FromArgb(0x22, 0x22, 0xc8)" />
-                <DxChartLegend Position="RelativePosition.Outside" VerticalAlignment="VerticalEdge.Bottom"
-                               HorizontalAlignment="HorizontalAlignment.Left" />
-            </DxChart>
-        </section>
-
-        <section class="rp-card rp-span-4">
-            <div class="rp-card-head"><h3>Termin Takibi</h3><span>@tur</span></div>
-            <DxGrid Data="data" CssClass="rp-grid">
-                <Columns>
-                    <DxGridDataColumn FieldName="Ay" Caption="Ay" />
-                    <DxGridDataColumn FieldName="Plan" Caption="Plan (kümülatif)" TextAlignment="GridTextAlignment.Right" />
-                    <DxGridDataColumn FieldName="Gercek" Caption="Gerçekleşen" TextAlignment="GridTextAlignment.Right" />
-                </Columns>
-            </DxGrid>
-        </section>
-    </text>;
-
-    // TreeMap: Blazor-ApexCharts (Seçenek 2). DevExtreme dxTreeMap kullanmak için
-    // <ApexTreeMap ...> yerine <DevExtremeTreeMap ...> yazın — parametreler aynıdır.
-    RenderFragment TreemapVisual(List<CategoryValue> data, Action<string> onClick) =@<text>
-        <div class="rp-treemap">
-            <ApexTreeMap Data="data"
-                         Selected="@(data == Repo.Portfoy ? portfoy : denetimTuru)"
-                         OnCellClick="@(label => { onClick(label); StateHasChanged(); })" />
-        </div>
-    </text>;
 }
 
-@code {
-    static string Pct(double v) => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%";
+<div class="rp-app">
 
-    List<CategoryValue> AksiyonDurumu => new()
+    @* ÜST BAŞLIK *@
+    <header class="rp-header">
+        <div class="rp-brand">
+            <div class="rp-logo">D3</div>
+            <div class="rp-brand-text">
+                <span>Denetim · Danışmanlık</span>
+                <span class="muted">Dönüşüm</span>
+            </div>
+        </div>
+        <div class="rp-header-main">
+            <div>
+                <div class="rp-kicker">@PageKicker</div>
+                <h1 class="rp-title">@PageTitle</h1>
+            </div>
+            <div class="rp-header-actions">
+                <span class="rp-refresh">Son yenileme @lastRefresh.ToString("dd.MM.yyyy HH:mm")</span>
+                <DxButton RenderStyle="ButtonRenderStyle.None" CssClass="rp-btn-outline"
+                          Text="Filtreleri sıfırla" Click="ResetFiltersAsync" />
+                <DxButton RenderStyle="ButtonRenderStyle.None" CssClass="rp-btn-accent"
+                          Text="@(filtersOpen ? "Filtreleri gizle" : "Filtreler")"
+                          Click="@(() => filtersOpen = !filtersOpen)" />
+            </div>
+        </div>
+    </header>
+
+    <div class="rp-body">
+
+        @* SOL RAY — KPI kartları + dilimleyiciler *@
+        <aside class="rp-rail">
+            @foreach (var kpi in kpis)
+            {
+                <div class="rp-kpi" @key="kpi.Label">
+                    <div class="rp-kpi-label">@kpi.Label</div>
+                    <div class="rp-kpi-value">
+                        @kpi.Value
+                        @if (!string.IsNullOrEmpty(kpi.Delta))
+                        {
+                            <span class="rp-kpi-delta">@kpi.Delta</span>
+                        }
+                    </div>
+                </div>
+            }
+
+            <div class="rp-rail-divider"></div>
+
+            @if (ShowPlanSlicer)
+            {
+                <div class="rp-slicer">
+                    <div class="rp-slicer-label">Plan Yılı</div>
+                    <div class="rp-slicer-group">
+                        @foreach (var y in PlanYearOptions)
+                        {
+                            <button @key="y" class="@SlicerCss(planYears.Contains(y))"
+                                    @onclick="() => TogglePlanYearAsync(y)">@y</button>
+                        }
+                    </div>
+                </div>
+            }
+
+            @if (ShowPortfoySlicer)
+            {
+                <div class="rp-slicer">
+                    <div class="rp-slicer-label">Portföy</div>
+                    <div class="rp-slicer-group">
+                        @foreach (var p in PortfoyOptions)
+                        {
+                            <button @key="p" class="@SlicerCss(portfoy == p)"
+                                    @onclick="() => SetPortfoyAsync(p)">@p</button>
+                        }
+                    </div>
+                </div>
+            }
+
+            @if (ShowRiskSlicer)
+            {
+                <div class="rp-slicer">
+                    <div class="rp-slicer-label">Risk Seviyesi</div>
+                    <div class="rp-slicer-group">
+                        @foreach (var r in AllRiskLevels)
+                        {
+                            <button @key="r" class="@SlicerCss(riskLevels.Contains(r))"
+                                    @onclick="() => ToggleRiskAsync(r)">@RiskName(r)</button>
+                        }
+                    </div>
+                </div>
+            }
+
+            <div class="rp-rail-note">@RailFootnote</div>
+        </aside>
+
+        @* TUVAL — sayfaya göre görseller *@
+        <main class="rp-canvas">
+            @switch (page)
+            {
+                case DashboardPage.Anasayfa:
+                    @RenderAnasayfa()
+                    break;
+                case DashboardPage.GenelBakis:
+                    @RenderGenelBakis()
+                    break;
+                case DashboardPage.BulgularAksiyonlar:
+                    @RenderBulgular()
+                    break;
+                case DashboardPage.AksiyonProjeksiyon:
+                    @RenderProjeksiyon(Repo.AksiyonProjeksiyon, "Aksiyon")
+                    break;
+                case DashboardPage.BulguProjeksiyon:
+                    @RenderProjeksiyon(Repo.BulguProjeksiyon, "Bulgu")
+                    break;
+                case DashboardPage.Subeler:
+                    @RenderSubeler()
+                    break;
+            }
+        </main>
+
+        @* SAĞ FİLTRE PANELİ *@
+        @if (filtersOpen)
+        {
+            <aside class="rp-filters">
+                <div class="rp-filters-head">
+                    <h3>Filtreler</h3>
+                    <DxButton RenderStyle="ButtonRenderStyle.None" CssClass="rp-btn-link"
+                              Text="Kapat" Click="@(() => filtersOpen = false)" />
+                </div>
+
+                @* Her tuş vuruşunda değil, 350 ms sessizlikten sonra filtrele.
+                   (InputDelay parametresi sürümünüzde yoksa sadece o niteliği silin;
+                    BindValueMode.OnDelayedInput varsayılan gecikmeyle çalışır.) *@
+                <DxTextBox @bind-Text="Search" NullText="Ara" CssClass="rp-search"
+                           BindValueMode="BindValueMode.OnDelayedInput" InputDelay="350" />
+
+                <div class="rp-filter-group">
+                    <div class="rp-filter-label">Risk Seviyesi</div>
+                    @foreach (var r in AllRiskLevels)
+                    {
+                        <button @key="r" class="@FilterCss(riskLevels.Contains(r))"
+                                @onclick="() => ToggleRiskAsync(r)">
+                            <span>@RiskName(r)</span>
+                            <span class="rp-count">@RiskCount(r)</span>
+                        </button>
+                    }
+                </div>
+
+                <div class="rp-filter-group">
+                    <div class="rp-filter-label">Denetim Türü</div>
+                    @foreach (var t in Repo.DenetimTuru)
+                    {
+                        <button @key="t.Label" class="@FilterCss(denetimTuru == t.Label)"
+                                @onclick="() => ToggleDenetimTuruAsync(t.Label)">
+                            <span>@t.Label</span>
+                            <span class="rp-count">@t.Value.ToString("N0")</span>
+                        </button>
+                    }
+                </div>
+
+                <div class="rp-filter-group">
+                    <div class="rp-filter-label">Plan Yılı</div>
+                    @foreach (var row in Repo.PlanYiliBulgu)
+                    {
+                        <button @key="row.Label" class="@FilterCss(planYears.Contains(row.Label))"
+                                @onclick="() => TogglePlanYearAsync(row.Label)">
+                            <span>@row.Label</span>
+                            <span class="rp-count">@row.Total</span>
+                        </button>
+                    }
+                </div>
+            </aside>
+        }
+    </div>
+
+    @* ALT SAYFA SEKMELERİ — Power BI page tabs *@
+    <nav class="rp-tabs">
+        @foreach (var (p, label) in Tabs)
+        {
+            <button @key="p" class="@(page == p ? "rp-tab rp-tab-active" : "rp-tab")"
+                    @onclick="() => SetPageAsync(p)">@label</button>
+        }
+    </nav>
+</div>
+
+@code {
+    // ==============================================================================
+    // SABİTLER — her render'da yeniden ayrılmasınlar diye static readonly
+    // ==============================================================================
+    const string TumuText = "Tümü";
+
+    static readonly string[] PlanYearOptions = { "2025", "2026" };
+    static readonly string[] PortfoyOptions = { TumuText, "BSD", "GMD", "KBD" };
+    static readonly RiskLevel[] AllRiskLevels = Enum.GetValues<RiskLevel>();
+
+    static readonly (DashboardPage Page, string Label)[] Tabs =
     {
-        new("Kapandı", 96, ReportColors.Teal),
-        new("Devam ediyor", 65, ReportColors.Orange),
-        new("Gecikmiş", 44, ReportColors.Red)
+        (DashboardPage.Anasayfa,            "Anasayfa"),
+        (DashboardPage.GenelBakis,          "2026 2Ç Genel Bakış (BSD-GMD)"),
+        (DashboardPage.BulgularAksiyonlar,  "2026 2Ç Bulgular ve Aksiyonlar"),
+        (DashboardPage.AksiyonProjeksiyon,  "2026 2Ç Aksiyon Kapama Projeksiyonu"),
+        (DashboardPage.BulguProjeksiyon,    "2026 2Ç Bulgu Kapanma Projeksiyonu"),
+        (DashboardPage.Subeler,             "2026 2Ç Şubeler (Kredi-OpRisk)")
     };
 
-    static readonly List<string> RaporGorusRenkleri = new() { ReportColors.Yellow, ReportColors.Green, ReportColors.LightBlue };
-    static readonly List<string> GorusSeviyeRenkleri = new() { ReportColors.LightBlue, ReportColors.Green, ReportColors.Yellow, ReportColors.Teal };
+    // System.Drawing.Color.FromArgb(...) her render'da çağrılmasın
+    static readonly System.Drawing.Color TealColor      = System.Drawing.Color.FromArgb(0x12, 0xa3, 0xa0);
+    static readonly System.Drawing.Color OrangeColor    = System.Drawing.Color.FromArgb(0xe8, 0x85, 0x3c);
+    static readonly System.Drawing.Color RedColor       = System.Drawing.Color.FromArgb(0xc0, 0x00, 0x00);
+    static readonly System.Drawing.Color BlueColor      = System.Drawing.Color.FromArgb(0x22, 0x22, 0xc8);
+    static readonly System.Drawing.Color GrayLineColor  = System.Drawing.Color.FromArgb(0x8c, 0x8c, 0x8c);
+
+    static readonly List<string> RaporGorusRenkleri   = new() { ReportColors.Yellow, ReportColors.Green, ReportColors.LightBlue };
+    static readonly List<string> GorusSeviyeRenkleri  = new() { ReportColors.LightBlue, ReportColors.Green, ReportColors.Yellow, ReportColors.Teal };
     static readonly List<string> AksiyonDurumRenkleri = new() { ReportColors.Teal, ReportColors.Orange, ReportColors.Red };
+
+    // TODO(db): gerçek aksiyon durumu dağılımını LoadAsync içinde doldurun
+    static readonly List<CategoryValue> AksiyonDurumu = new()
+    {
+        new("Kapandı",      96, ReportColors.Teal),
+        new("Devam ediyor", 65, ReportColors.Orange),
+        new("Gecikmiş",     44, ReportColors.Red)
+    };
+
+    // ==============================================================================
+    // FİLTRE DURUMU
+    // ==============================================================================
+    DashboardPage page = DashboardPage.GenelBakis;
+    HashSet<string> planYears = new(PlanYearOptions);
+    HashSet<RiskLevel> riskLevels = new(AllRiskLevels);
+    string portfoy = TumuText;
+    string? denetimTuru;
+    bool filtersOpen = true;
+    DateTime lastRefresh;
+
+    string _search = string.Empty;
+    string Search
+    {
+        get => _search;
+        set
+        {
+            if (_search == value) return;
+            _search = value ?? string.Empty;
+            _ = LoadAsync();          // OnDelayedInput sayesinde tuş başına değil
+        }
+    }
+
+    // ==============================================================================
+    // HESAPLANMIŞ (ÖNBELLEKLENMİŞ) VERİ
+    // Eskiden bunlar computed property'ydi ve her render'da YENİ referans üretip
+    // DxGrid/DxChart'ı sıfırdan yükletiyordu. Artık sadece LoadAsync() doldurur.
+    // ==============================================================================
+    List<StackedRow> planRows = new();
+    List<SubeRow> subeler = new();
+    List<KpiItem> kpis = new();
+    int bulguToplam;
+    int subeBulguToplam;
+
+    CancellationTokenSource? cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        lastRefresh = DateTime.Now;
+        await LoadAsync();
+    }
+
+    // ==============================================================================
+    // TEK VERİ GİRİŞ NOKTASI
+    // Veritabanına geçerken DEĞİŞECEK TEK METOT BURASI. İçindeki Repo.* çağrılarını
+    // await DashboardService.GetAsync(filter, ct) ile değiştirin; markup'a dokunmayın.
+    // ==============================================================================
+    async Task LoadAsync()
+    {
+        cts?.Cancel();
+        cts?.Dispose();
+        cts = new CancellationTokenSource();
+        var ct = cts.Token;
+
+        // ---- şu an bellek içi; DB'de burada tek bir await olacak -------------------
+        planRows = Repo.PlanYiliBulgu
+            .Where(r => planYears.Contains(r.Label))
+            .ToList();
+
+        bulguToplam = planRows.Sum(r =>
+            (riskLevels.Contains(RiskLevel.Dusuk) ? r.Dusuk : 0) +
+            (riskLevels.Contains(RiskLevel.Orta) ? r.Orta : 0) +
+            (riskLevels.Contains(RiskLevel.Yuksek) ? r.Yuksek : 0));
+
+        var riskNames = riskLevels.Select(RiskName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        subeBulguToplam = Repo.SubeBulguSeviyeleri
+            .Where(c => riskNames.Contains(c.Label))
+            .Sum(c => (int)c.Value);
+
+        subeler = Repo.Subeler
+            .Where(s => denetimTuru is null || s.DenetimTuru == denetimTuru)
+            .Where(s => riskLevels.Contains(s.Risk))
+            .Where(s => string.IsNullOrWhiteSpace(_search)
+                        || s.SubeAdi.Contains(_search, StringComparison.CurrentCultureIgnoreCase)
+                        || s.DenetimTuru.Contains(_search, StringComparison.CurrentCultureIgnoreCase))
+            .ToList();
+
+        kpis = BuildKpis();
+
+        if (ct.IsCancellationRequested) return;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        cts?.Cancel();
+        cts?.Dispose();
+    }
+
+    // ==============================================================================
+    // FİLTRE / SAYFA OLAYLARI — hepsi LoadAsync() üzerinden geçer
+    // ==============================================================================
+    async Task SetPageAsync(DashboardPage p)
+    {
+        if (page == p) return;
+        page = p;
+        await LoadAsync();
+    }
+
+    async Task TogglePlanYearAsync(string y)
+    {
+        if (!planYears.Add(y))
+        {
+            if (planYears.Count <= 1) return;   // en az bir yıl seçili kalsın
+            planYears.Remove(y);
+        }
+        await LoadAsync();
+    }
+
+    async Task ToggleRiskAsync(RiskLevel r)
+    {
+        if (!riskLevels.Add(r))
+        {
+            if (riskLevels.Count <= 1) return;
+            riskLevels.Remove(r);
+        }
+        await LoadAsync();
+    }
+
+    async Task SetPortfoyAsync(string p)
+    {
+        // treemap'ten aynı hücreye tekrar tıklanırsa filtreyi kaldır
+        portfoy = (portfoy == p && p != TumuText) ? TumuText : p;
+        await LoadAsync();
+    }
+
+    async Task ToggleDenetimTuruAsync(string t)
+    {
+        denetimTuru = denetimTuru == t ? null : t;
+        await LoadAsync();
+    }
+
+    async Task ResetFiltersAsync()
+    {
+        planYears = new(PlanYearOptions);
+        riskLevels = new(AllRiskLevels);
+        portfoy = TumuText;
+        denetimTuru = null;
+        _search = string.Empty;
+        lastRefresh = DateTime.Now;
+        await LoadAsync();
+    }
+
+    // ==============================================================================
+    // GÖRÜNÜM YARDIMCILARI
+    // ==============================================================================
+    static string RiskName(RiskLevel r) => r switch
+    {
+        RiskLevel.Yuksek => "Yüksek",
+        RiskLevel.Orta => "Orta",
+        _ => "Düşük"
+    };
+
+    int RiskCount(RiskLevel r) => Repo.PlanYiliBulgu.Sum(x => r switch
+    {
+        RiskLevel.Yuksek => x.Yuksek,
+        RiskLevel.Orta => x.Orta,
+        _ => x.Dusuk
+    });
+
+    static string SlicerCss(bool active) => active ? "rp-chip rp-chip-on" : "rp-chip";
+    static string FilterCss(bool active) => active ? "rp-filter-item rp-filter-on" : "rp-filter-item";
+
+    bool ShowPlanSlicer => page != DashboardPage.Subeler;
+    bool ShowPortfoySlicer => page is DashboardPage.GenelBakis
+                                   or DashboardPage.AksiyonProjeksiyon
+                                   or DashboardPage.BulguProjeksiyon;
+    bool ShowRiskSlicer => page is DashboardPage.Subeler or DashboardPage.BulgularAksiyonlar;
+
+    string PageKicker => page switch
+    {
+        DashboardPage.Subeler => "Kredi · OpRisk · İklim İç Ortam — 2026 2. Çeyrek",
+        DashboardPage.Anasayfa => "Denetim Danışmanlık Dönüşüm — Raporlama Portalı",
+        _ => "BSD · GMD · İştirakler — 2026 2. Çeyrek"
+    };
+
+    string PageTitle => page switch
+    {
+        DashboardPage.Anasayfa => "Anasayfa",
+        DashboardPage.GenelBakis => "Bilgi Sistemleri, Genel Müdürlük ve İştirakler",
+        DashboardPage.BulgularAksiyonlar => "Bulgular ve Aksiyonlar",
+        DashboardPage.AksiyonProjeksiyon => "Aksiyon Kapama Projeksiyonu",
+        DashboardPage.BulguProjeksiyon => "Bulgu Kapanma Projeksiyonu",
+        _ => "Şubeler — Tamamlanan Denetimler"
+    };
+
+    string RailFootnote => page == DashboardPage.Subeler
+        ? "*İklim ve İç Ortam denetimlerinde bulgu bulunmaması nedeniyle, ilgili filtreleme sonucunda tabloda veri görüntülenmeyebilir."
+        : "Kaynak: Denetim Takip Sistemi · Plan Yılı ve Portföy dilimleyicileri tüm görselleri etkiler.";
+
+    // ==============================================================================
+    // KPI'LAR
+    // TODO(db): buradaki sabit ("89", "96", "109") ve türetilmiş (*1.34, != 201,
+    // != 153) değerlerin tamamı Power BI ölçülerinin yerine geçen SQL agregalarıyla
+    // değiştirilecek. Şu an yalnız düzenin doğru görünmesi için duruyorlar.
+    // ==============================================================================
+    List<KpiItem> BuildKpis() => page switch
+    {
+        DashboardPage.Subeler => new()
+        {
+            new("Denetlenen Şube Sayısı", "89"),                                   // TODO(db)
+            new("Tamamlanan Rapor Sayısı", "89"),                                  // TODO(db)
+            new("Toplam Bulgu Sayısı*", subeBulguToplam.ToString("N0"),
+                subeBulguToplam != 201 ? "filtreli" : null)                        // TODO(db)
+        },
+        DashboardPage.BulgularAksiyonlar => new()
+        {
+            new("Bulgu Sayısı", bulguToplam.ToString("N0")),
+            new("Aksiyon Sayısı", ((int)(bulguToplam * 1.34)).ToString("N0")),      // TODO(db)
+            new("Kapanan Aksiyon", "96"),                                          // TODO(db)
+            new("Açık Aksiyon", "109")                                             // TODO(db)
+        },
+        DashboardPage.AksiyonProjeksiyon or DashboardPage.BulguProjeksiyon => ProjeksiyonKpis(),
+        DashboardPage.Anasayfa => new()
+        {
+            new("Tamamlanan Rapor", "110", "2026 2Ç"),                             // TODO(db)
+            new("Toplam Bulgu", "354"),                                            // TODO(db)
+            new("Açık Aksiyon", "109")                                             // TODO(db)
+        },
+        _ => new()
+        {
+            new("Tamamlanan Rapor Sayısı", RaporToplam.ToString("N0")),
+            new("Bulgu Sayısı", bulguToplam.ToString("N0"),
+                bulguToplam != 153 ? "filtreli" : null),                           // TODO(db)
+            new("Aksiyon Sayısı", ((int)(bulguToplam * 1.34)).ToString("N0"))       // TODO(db)
+        }
+    };
+
+    // TODO(db): SQL'den COUNT(DISTINCT RaporId) gelecek
+    int RaporToplam => planYears.Count == 2 ? 21 : (planYears.Contains("2026") ? 18 : 3);
+
+    List<KpiItem> ProjeksiyonKpis()
+    {
+        var src = page == DashboardPage.AksiyonProjeksiyon ? Repo.AksiyonProjeksiyon : Repo.BulguProjeksiyon;
+
+        if (src.Count == 0)
+            return new() { new("Planlanan Kapanış", "—"), new("Gerçekleşen", "—"), new("Sapma", "—") };
+
+        var planSon = src[^1].Plan;
+
+        // Eski kod src.Last(p => p.Gercek.HasValue) kullanıyordu → hiç gerçekleşme
+        // yoksa InvalidOperationException. Gerçek veride bu hâl mutlaka olacak.
+        var son = src.LastOrDefault(p => p.Gercek.HasValue);
+        if (son is null)
+            return new()
+            {
+                new("Planlanan Kapanış", planSon.ToString("N0")),
+                new("Gerçekleşen", "—", "veri yok"),
+                new("Sapma", "—")
+            };
+
+        var gercek = son.Gercek!.Value;
+        var oran = son.Plan == 0 ? (double?)null : (double)gercek / son.Plan;   // sıfıra bölme koruması
+
+        return new()
+        {
+            new("Planlanan Kapanış", planSon.ToString("N0")),
+            new("Gerçekleşen", gercek.ToString("N0"), oran.HasValue ? $"{oran:P1} hedef" : null),
+            new("Sapma", (gercek - son.Plan).ToString("N0"), gercek < son.Plan ? "gecikme" : "ileride")
+        };
+    }
 }

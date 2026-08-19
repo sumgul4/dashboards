@@ -1,6 +1,14 @@
 @* Blazor-ApexCharts treemap (Seçenek 2 — MIT, ücretsiz)
    dotnet add package Blazor-ApexCharts
-   _Imports.razor: @using ApexCharts                                        *@
+   _Imports.razor: @using ApexCharts
+
+   v2 DEĞİŞİKLİKLERİ
+   • OnParametersSetAsync her parametre değişiminde (yani üst bileşenin HER
+     render'ında) UpdateSeriesAsync() çağırıyordu → gereksiz JS interop fırtınası.
+     Artık veri/seçim imzası gerçekten değiştiyse çağrılıyor.
+   • Selected artık görsel olarak da uygulanıyor: seçim varken seçili olmayan
+     hücreler soluk griye düşüyor (Power BI çapraz filtre davranışı).
+*@
 @using ApexCharts
 
 <ApexChart TItem="CategoryValue"
@@ -14,18 +22,24 @@
                      SeriesType="SeriesType.Treemap"
                      XValue="@(i => i.Label)"
                      YValue="@(i => (decimal)i.Value)"
-                     PointColor="@(i => i.Color)" />
+                     PointColor="@(i => ColorFor(i))" />
 </ApexChart>
 
 @code {
     [Parameter, EditorRequired] public List<CategoryValue> Data { get; set; } = new();
     [Parameter] public string SeriesName { get; set; } = "Değer";
     [Parameter] public string Height { get; set; } = "100%";
-    /// <summary>Seçili hücrenin etiketi (çapraz filtre).</summary>
+
+    /// <summary>Seçili hücrenin etiketi (çapraz filtre). null = seçim yok.</summary>
     [Parameter] public string? Selected { get; set; }
+
     [Parameter] public EventCallback<string> OnCellClick { get; set; }
 
+    /// <summary>Seçim varken seçili olmayan hücrelerin rengi.</summary>
+    const string DimColor = "#c9c9c9";
+
     ApexChart<CategoryValue>? chart;
+    string? renderedSignature;
 
     ApexChartOptions<CategoryValue> chartOptions = new()
     {
@@ -57,6 +71,11 @@
         Stroke = new Stroke { Width = 1, Colors = new List<string> { "#ffffff" } }
     };
 
+    string ColorFor(CategoryValue item)
+        => Selected is null || string.Equals(item.Label, Selected, StringComparison.Ordinal)
+            ? item.Color
+            : DimColor;
+
     async Task OnPointSelected(SelectedData<CategoryValue> data)
     {
         var label = data.DataPoint?.X?.ToString();
@@ -66,6 +85,29 @@
 
     protected override async Task OnParametersSetAsync()
     {
-        if (chart is not null) await chart.UpdateSeriesAsync();
+        var signature = BuildSignature();
+
+        // İlk render: ApexChart bileşeni seriyi kendisi çizecek, interop gereksiz.
+        if (chart is null)
+        {
+            renderedSignature = signature;
+            return;
+        }
+
+        if (signature == renderedSignature) return;   // gerçek bir değişiklik yok
+
+        renderedSignature = signature;
+        await chart.UpdateSeriesAsync();
+    }
+
+    string BuildSignature()
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var d in Data)
+        {
+            sb.Append(d.Label).Append(':').Append(d.Value).Append('|');
+        }
+        sb.Append('#').Append(Selected);
+        return sb.ToString();
     }
 }

@@ -1,5 +1,14 @@
 @* DevExtreme dxTreeMap sarmalayıcısı (Seçenek 1 — JS interop)
-   Gereksinim: sayfada dx.all.js + wwwroot/js/treemap-interop.js *@
+   Gereksinim: sayfada dx.all.js + wwwroot/js/treemap-interop.js
+
+   v2 DEĞİŞİKLİKLERİ
+   • OnAfterRenderAsync her render'da update() çağırıyordu. Blazor Server'da bu,
+     üst bileşenin her render'ında (ör. arama kutusundaki her tuş vuruşunda)
+     SignalR üzerinden bir interop çağrısı + tüm veri dizisinin yeniden
+     serileştirilmesi anlamına geliyordu. Artık imza karşılaştırması var.
+   • İki farklı [JSInvokable] aynı işi yapıyordu (biri ölü kod); tek metoda indi.
+   • Payload her çağrıda yeniden üretiliyordu; yalnız değişimde üretiliyor.
+*@
 @implements IAsyncDisposable
 @inject IJSRuntime JS
 
@@ -7,17 +16,32 @@
 
 @code {
     [Parameter, EditorRequired] public List<CategoryValue> Data { get; set; } = new();
-    /// <summary>Seçili hücrenin etiketi (çapraz filtre).</summary>
+
+    /// <summary>Seçili hücrenin etiketi (çapraz filtre). null = seçim yok.</summary>
     [Parameter] public string? Selected { get; set; }
+
     [Parameter] public EventCallback<string> OnCellClick { get; set; }
 
     ElementReference host;
     IJSObjectReference? module;
     DotNetObjectReference<DevExtremeTreeMap>? selfRef;
     bool created;
+    string? renderedSignature;
 
     record Point(string name, double value, string color);
-    object[] Payload => Data.Select(d => new Point(d.Label, d.Value, d.Color)).Cast<object>().ToArray();
+
+    object[] BuildPayload() => Data.Select(d => (object)new Point(d.Label, d.Value, d.Color)).ToArray();
+
+    string BuildSignature()
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var d in Data)
+        {
+            sb.Append(d.Label).Append(':').Append(d.Value).Append('|');
+        }
+        sb.Append('#').Append(Selected);
+        return sb.ToString();
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -25,19 +49,22 @@
         {
             module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/treemap-interop.js");
             selfRef = DotNetObjectReference.Create(this);
-            await module.InvokeVoidAsync("create", host, Payload, selfRef, Selected);
+            renderedSignature = BuildSignature();
+            await module.InvokeVoidAsync("create", host, BuildPayload(), selfRef, Selected);
             created = true;
+            return;
         }
-        else if (created && module is not null)
-        {
-            await module.InvokeVoidAsync("update", host, Payload, Selected);
-        }
+
+        if (!created || module is null) return;
+
+        var signature = BuildSignature();
+        if (signature == renderedSignature) return;   // gereksiz interop yapmayalım
+
+        renderedSignature = signature;
+        await module.InvokeVoidAsync("update", host, BuildPayload(), Selected);
     }
 
-    [JSInvokable]
-    public Task OnCellClickFromJs(string label) => OnCellClick.InvokeAsync(label);
-
-    // JS modülü 'OnCellClick' adıyla çağırır
+    // JS modülü bu adı çağırır (treemap-interop.js → invokeMethodAsync('OnCellClick', label))
     [JSInvokable("OnCellClick")]
     public Task OnCellClickInterop(string label) => OnCellClick.InvokeAsync(label);
 
@@ -45,10 +72,17 @@
     {
         try
         {
-            if (module is not null && created) await module.InvokeVoidAsync("dispose", host);
-            if (module is not null) await module.DisposeAsync();
+            if (module is not null)
+            {
+                if (created) await module.InvokeVoidAsync("dispose", host);
+                await module.DisposeAsync();
+            }
         }
-        catch (JSDisconnectedException) { }
-        selfRef?.Dispose();
+        catch (JSDisconnectedException) { /* devre kapandı, temizlik gereksiz */ }
+        catch (TaskCanceledException) { }
+        finally
+        {
+            selfRef?.Dispose();
+        }
     }
 }
