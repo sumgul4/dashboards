@@ -1,0 +1,71 @@
+@* Blazor-ApexCharts treemap (Seçenek 2 — MIT, ücretsiz)
+   dotnet add package Blazor-ApexCharts
+   _Imports.razor: @using ApexCharts                                        *@
+@using ApexCharts
+
+<ApexChart TItem="CategoryValue"
+           Options="chartOptions"
+           Height="@Height"
+           OnDataPointSelection="OnPointSelected"
+           @ref="chart">
+    <ApexPointSeries TItem="CategoryValue"
+                     Items="Data"
+                     Name="@SeriesName"
+                     SeriesType="SeriesType.Treemap"
+                     XValue="@(i => i.Label)"
+                     YValue="@(i => (decimal)i.Value)"
+                     PointColor="@(i => i.Color)" />
+</ApexChart>
+
+@code {
+    [Parameter, EditorRequired] public List<CategoryValue> Data { get; set; } = new();
+    [Parameter] public string SeriesName { get; set; } = "Değer";
+    [Parameter] public string Height { get; set; } = "100%";
+    /// <summary>Seçili hücrenin etiketi (çapraz filtre).</summary>
+    [Parameter] public string? Selected { get; set; }
+    [Parameter] public EventCallback<string> OnCellClick { get; set; }
+
+    ApexChart<CategoryValue>? chart;
+
+    ApexChartOptions<CategoryValue> chartOptions = new()
+    {
+        Chart = new Chart
+        {
+            Toolbar = new Toolbar { Show = false },
+            FontFamily = "Archivo, Segoe UI, sans-serif",
+            Animations = new Animations { Enabled = true, Speed = 250 }
+        },
+        Legend = new Legend { Show = false },
+        Tooltip = new Tooltip { Enabled = true },
+        PlotOptions = new PlotOptions
+        {
+            Treemap = new PlotOptionsTreemap
+            {
+                Distributed = true,           // her hücre kendi rengini kullanır
+                EnableShades = false
+            }
+        },
+        DataLabels = new DataLabels
+        {
+            Enabled = true,
+            Style = new DataLabelsStyle { FontSize = "12px", FontWeight = "700", Colors = new List<string> { "#ffffff" } }
+        },
+        States = new States
+        {
+            Active = new StatesActive { Filter = new StatesFilter { Type = StatesFilterType.darken, Value = 0.15d } }
+        },
+        Stroke = new Stroke { Width = 1, Colors = new List<string> { "#ffffff" } }
+    };
+
+    async Task OnPointSelected(SelectedData<CategoryValue> data)
+    {
+        var label = data.DataPoint?.X?.ToString();
+        if (!string.IsNullOrEmpty(label))
+            await OnCellClick.InvokeAsync(label);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (chart is not null) await chart.UpdateSeriesAsync();
+    }
+}
