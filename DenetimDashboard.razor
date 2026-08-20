@@ -22,7 +22,10 @@
    2) CS1503 "Argument 1: cannot convert from 'method group' to ChartElementFormat"
       Sebep: ChartElementFormat.Percent bir SABİT değil, statik bir FABRİKA
       METODU. Parantezsiz yazıldığında ifade bir "method group" olur.
-      Çözüm: Format="@@(ChartElementFormat.Percent(1))"
+      Çözüm: ValueFormat="@@(ChartElementFormat.Percent(1))"
+      (Ayrıca DxChartSeriesLabel'da "Format" adlı parametre YOK — doğrusu
+       ValueFormat. IntelliSense listesinde ArgumentFormat / ValueFormat /
+       FormatPattern var, Format yok.)
       (Projenizde Percent(int) aşırı yüklemesi yoksa Percent() olarak yazın.)
 
    3) CS0103 "The name 'DashStyle' does not exist in the current context"
@@ -73,10 +76,12 @@
     // ==============================================================================
 
     // ---- TreeMap sarmalayıcı -------------------------------------------------------
-    // DevExtreme dxTreeMap'e geçmek için tek satır: <ApexTreeMap> → <DevExtremeTreeMap>
+    // SEÇENEK 1: DevExtreme dxTreeMap (JS interop) — aktif.
+    // Blazor-ApexCharts'a dönmek isterseniz tek satır: <DevExtremeTreeMap> → <ApexTreeMap>
+    // (parametreler birebir aynı: Data, Selected, OnCellClick)
     RenderFragment TreemapVisual(List<CategoryValue> data, string? selected, Func<string, Task> onCellClick) => @<text>
         <div class="rp-treemap">
-            <ApexTreeMap Data="data" Selected="selected" OnCellClick="@(label => onCellClick(label))" />
+            <DevExtremeTreeMap Data="data" Selected="selected" OnCellClick="@(label => onCellClick(label))" />
         </div>
     </text>;
 
@@ -105,46 +110,61 @@
 
         <section class="rp-card rp-span-4">
             <div class="rp-card-head"><h3>Rapor Genel Görüşü</h3><span>Rapor sayısı</span></div>
-            <DxPieChart Data="Repo.RaporGenelGorusu" CssClass="rp-viz">
+            @* Pastada tıklanan DİLİMİ bilmek gerekiyor (seri adı yetmez) → args.Point *@
+            <DxPieChart Data="Repo.RaporGenelGorusu" CssClass="rp-viz"
+                        SeriesClick="@(args => OnGorusClickAsync(args.Point?.Argument?.ToString()))">
                 <DxPieChartSeries ValueField="@((CategoryValue c) => c.Value)"
                                   ArgumentField="@(c => c.Label)"
                                   SummaryMethod="Enumerable.Sum">
-                    @* DÜZELTME 2: Percent bir metottur → Percent(1). Aşırı yükleme yoksa Percent() *@
+                    @* DÜZELTME: Percent bir metot → Percent(1)
+                       DÜZELTME: DxChartSeriesLabel'da "Format" YOK → doğrusu "ValueFormat".
+                       (IntelliSense listenizde ArgumentFormat / ValueFormat / FormatPattern
+                        vardı, Format yoktu — ekran görüntünüzde Format'ın altı dalgalıydı.) *@
                     <DxChartSeriesLabel Visible="true"
                                         Position="RelativePosition.Outside"
-                                        Format="@(ChartElementFormat.Percent(1))" />
+                                        ValueFormat="@(ChartElementFormat.Percent(1))"
+                                        BackgroundColor="TransparentColor" />
                 </DxPieChartSeries>
                 <DxChartLegend Position="RelativePosition.Outside"
                                HorizontalAlignment="HorizontalAlignment.Center"
                                VerticalAlignment="VerticalEdge.Bottom" />
-                <DxChartPalette PaletteName="ChartPalette.Custom" Colors="RaporGorusRenkleri" />
+                @* Çapraz filtre solması: palet LoadAsync içinde crossGorus'a göre hesaplanır.
+                   Tıklama bağlantısı için aşağıdaki "PASTA GRAFİK TIKLAMASI" notuna bakın. *@
+                <DxChartPalette PaletteName="ChartPalette.Custom" Colors="raporGorusPalette" />
             </DxPieChart>
         </section>
 
         <section class="rp-card rp-span-5">
             <div class="rp-card-head"><h3>Denetim Plan Yılı ve Bulgu Seviyesi</h3><span>Bulgu sayısı</span></div>
-            <DxChart Data="planRows" CssClass="rp-viz" Rotated="true">
-                @if (riskLevels.Contains(RiskLevel.Dusuk))
-                {
-                    <DxChartStackedBarSeries Name="Düşük" Color="TealColor"
-                                             ArgumentField="@((StackedRow r) => r.Label)" ValueField="@(r => r.Dusuk)">
-                        <DxChartSeriesLabel Visible="true" />
-                    </DxChartStackedBarSeries>
-                }
-                @if (riskLevels.Contains(RiskLevel.Orta))
-                {
-                    <DxChartStackedBarSeries Name="Orta" Color="OrangeColor"
-                                             ArgumentField="@((StackedRow r) => r.Label)" ValueField="@(r => r.Orta)">
-                        <DxChartSeriesLabel Visible="true" />
-                    </DxChartStackedBarSeries>
-                }
-                @if (riskLevels.Contains(RiskLevel.Yuksek))
-                {
-                    <DxChartStackedBarSeries Name="Yüksek" Color="RedColor"
-                                             ArgumentField="@((StackedRow r) => r.Label)" ValueField="@(r => r.Yuksek)">
-                        <DxChartSeriesLabel Visible="true" />
-                    </DxChartStackedBarSeries>
-                }
+            @* ÇAPRAZ FİLTRE (soru 2): Bir seriye tıklamak o risk seviyesini izole eder,
+               tekrar tıklamak bırakır. Seriler artık @if ile GİZLENMİYOR — Power BI'da
+               olduğu gibi hepsi duruyor, seçili olmayanlar SOLUYOR (RiskColor).
+
+               args üzerinde Point ve Series üyeleri IntelliSense ile doğrulandı.
+               Stacked bar'da seri adı (Düşük/Orta/Yüksek) yeterli olduğu için
+               args.Series.Name kullanıyoruz; pastalarda dilim gerektiği için
+               args.Point.Argument kullanılıyor. *@
+            <DxChart Data="planRows" CssClass="rp-viz" Rotated="true"
+                     SeriesClick="@(args => OnRiskSeriesClickAsync(args.Series?.Name))">
+                <DxChartStackedBarSeries Name="Düşük" Color="@RiskColor(RiskLevel.Dusuk)"
+                                         ArgumentField="@((StackedRow r) => r.Label)" ValueField="@(r => r.Dusuk)">
+                    @* Soru 1: renkli kutucuk = etiketin arka plan dolgusu → şeffaf *@
+                    <DxChartSeriesLabel Visible="true" BackgroundColor="TransparentColor"
+                                        TextOverflow="ChartTextOverflow.Hide" />
+                </DxChartStackedBarSeries>
+
+                <DxChartStackedBarSeries Name="Orta" Color="@RiskColor(RiskLevel.Orta)"
+                                         ArgumentField="@((StackedRow r) => r.Label)" ValueField="@(r => r.Orta)">
+                    <DxChartSeriesLabel Visible="true" BackgroundColor="TransparentColor"
+                                        TextOverflow="ChartTextOverflow.Hide" />
+                </DxChartStackedBarSeries>
+
+                <DxChartStackedBarSeries Name="Yüksek" Color="@RiskColor(RiskLevel.Yuksek)"
+                                         ArgumentField="@((StackedRow r) => r.Label)" ValueField="@(r => r.Yuksek)">
+                    <DxChartSeriesLabel Visible="true" BackgroundColor="TransparentColor"
+                                        TextOverflow="ChartTextOverflow.Hide" />
+                </DxChartStackedBarSeries>
+
                 <DxChartLegend Position="RelativePosition.Outside" VerticalAlignment="VerticalEdge.Bottom"
                                HorizontalAlignment="HorizontalAlignment.Left" />
             </DxChart>
@@ -176,7 +196,8 @@
             <DxChart Data="Repo.BulguSurec" CssClass="rp-viz" Rotated="true">
                 <DxChartBarSeries ArgumentField="@((CategoryValue c) => c.Label)" ValueField="@(c => c.Value)"
                                   Color="BlueColor">
-                    <DxChartSeriesLabel Visible="true" />
+                    <DxChartSeriesLabel Visible="true" BackgroundColor="TransparentColor"
+                                        TextOverflow="ChartTextOverflow.Hide" />
                 </DxChartBarSeries>
                 <DxChartLegend Visible="false" />
             </DxChart>
@@ -184,11 +205,12 @@
 
         <section class="rp-card rp-span-6">
             <div class="rp-card-head"><h3>Aksiyon Durumu</h3><span>Aksiyon sayısı</span></div>
-            <DxPieChart Data="AksiyonDurumu" CssClass="rp-viz" Type="PieChartType.Donut">
+            <DxPieChart Data="AksiyonDurumu" CssClass="rp-viz" Type="PieChartType.Donut"
+                        SeriesClick="@(args => OnAksiyonClickAsync(args.Point?.Argument?.ToString()))">
                 <DxPieChartSeries ValueField="@((CategoryValue c) => c.Value)" ArgumentField="@(c => c.Label)"
                                   SummaryMethod="Enumerable.Sum" />
                 <DxChartLegend Position="RelativePosition.Outside" VerticalAlignment="VerticalEdge.Bottom" />
-                <DxChartPalette PaletteName="ChartPalette.Custom" Colors="AksiyonDurumRenkleri" />
+                <DxChartPalette PaletteName="ChartPalette.Custom" Colors="aksiyonDurumPalette" />
             </DxPieChart>
         </section>
     </text>;
@@ -234,22 +256,40 @@
 
         <section class="rp-card rp-span-4">
             <div class="rp-card-head"><h3>Rapor Görüş Seviyeleri</h3><span>Rapor sayısı</span></div>
-            <DxPieChart Data="Repo.RaporGorusSeviyeleri" CssClass="rp-viz" Type="PieChartType.Donut">
+            <DxPieChart Data="Repo.RaporGorusSeviyeleri" CssClass="rp-viz" Type="PieChartType.Donut"
+                        SeriesClick="@(args => OnGorusSeviyeClickAsync(args.Point?.Argument?.ToString()))">
                 <DxPieChartSeries ValueField="@((CategoryValue c) => c.Value)" ArgumentField="@(c => c.Label)"
                                   SummaryMethod="Enumerable.Sum">
-                    <DxChartSeriesLabel Visible="true" Position="RelativePosition.Outside" />
+                    <DxChartSeriesLabel Visible="true" Position="RelativePosition.Outside"
+                                        BackgroundColor="TransparentColor" />
                 </DxPieChartSeries>
                 <DxChartLegend Position="RelativePosition.Outside" VerticalAlignment="VerticalEdge.Bottom" />
-                <DxChartPalette PaletteName="ChartPalette.Custom" Colors="GorusSeviyeRenkleri" />
+                <DxChartPalette PaletteName="ChartPalette.Custom" Colors="gorusSeviyePalette" />
             </DxPieChart>
         </section>
 
         <section class="rp-card rp-span-3">
             <div class="rp-card-head"><h3>Bulgu Seviyeleri</h3><span>Bulgu sayısı</span></div>
-            <DxChart Data="Repo.SubeBulguSeviyeleri" CssClass="rp-viz" Rotated="true">
-                <DxChartBarSeries ArgumentField="@((CategoryValue c) => c.Label)" ValueField="@(c => c.Value)"
-                                  Color="TealColor">
-                    <DxChartSeriesLabel Visible="true" />
+            @* Eskiden TEK seri + 3 nokta vardı; tek seride her noktaya farklı renk vermek
+               CustomizeSeriesPoint gerektiriyor. Onun yerine 3 AYRI SERİ kullanıyoruz:
+               her serinin kendi Color'ı var → solma ve tıklama bedava geliyor,
+               doğrulaması belirsiz hiçbir API'ye ihtiyaç kalmıyor. *@
+            <DxChart Data="bulguSeviyeBars" CssClass="rp-viz" Rotated="true"
+                     SeriesClick="@(args => OnRiskSeriesClickAsync(args.Series?.Name))">
+                <DxChartBarSeries Name="Yüksek" Color="@RiskColor(RiskLevel.Yuksek)"
+                                  ArgumentField="@((RiskBar b) => b.Label)" ValueField="@(b => b.Yuksek)">
+                    <DxChartSeriesLabel Visible="true" BackgroundColor="TransparentColor"
+                                        TextOverflow="ChartTextOverflow.Hide" />
+                </DxChartBarSeries>
+                <DxChartBarSeries Name="Orta" Color="@RiskColor(RiskLevel.Orta)"
+                                  ArgumentField="@((RiskBar b) => b.Label)" ValueField="@(b => b.Orta)">
+                    <DxChartSeriesLabel Visible="true" BackgroundColor="TransparentColor"
+                                        TextOverflow="ChartTextOverflow.Hide" />
+                </DxChartBarSeries>
+                <DxChartBarSeries Name="Düşük" Color="@RiskColor(RiskLevel.Dusuk)"
+                                  ArgumentField="@((RiskBar b) => b.Label)" ValueField="@(b => b.Dusuk)">
+                    <DxChartSeriesLabel Visible="true" BackgroundColor="TransparentColor"
+                                        TextOverflow="ChartTextOverflow.Hide" />
                 </DxChartBarSeries>
                 <DxChartLegend Visible="false" />
             </DxChart>
@@ -354,6 +394,27 @@
                         {
                             <button @key="r" class="@SlicerCss(riskLevels.Contains(r))"
                                     @onclick="() => ToggleRiskAsync(r)">@RiskName(r)</button>
+                        }
+                    </div>
+                </div>
+            }
+
+            @* Çapraz filtre aktifken kullanıcı neyi filtrelediğini görmeli.
+               Power BI'da bu görsel üzerindeki vurgudan anlaşılır; burada
+               açıkça yazıp tek tıkla kaldırma imkânı veriyoruz. *@
+            @{
+                var aktifCapraz = ActiveCrossFilters().ToList();
+            }
+            @if (aktifCapraz.Count > 0)
+            {
+                <div class="rp-slicer">
+                    <div class="rp-slicer-label">Grafik Seçimi</div>
+                    <div class="rp-slicer-group">
+                        @foreach (var cf in aktifCapraz)
+                        {
+                            <button @key="cf.Label" class="rp-chip rp-chip-on" @onclick="cf.Clear">
+                                @cf.Label ✕
+                            </button>
                         }
                     </div>
                 </div>
@@ -479,9 +540,17 @@
     static readonly System.Drawing.Color BlueColor      = System.Drawing.Color.FromArgb(0x22, 0x22, 0xc8);
     static readonly System.Drawing.Color GrayLineColor  = System.Drawing.Color.FromArgb(0x8c, 0x8c, 0x8c);
 
-    static readonly List<string> RaporGorusRenkleri   = new() { ReportColors.Yellow, ReportColors.Green, ReportColors.LightBlue };
-    static readonly List<string> GorusSeviyeRenkleri  = new() { ReportColors.LightBlue, ReportColors.Green, ReportColors.Yellow, ReportColors.Teal };
-    static readonly List<string> AksiyonDurumRenkleri = new() { ReportColors.Teal, ReportColors.Orange, ReportColors.Red };
+    // Soru 1: etiketlerin arkasındaki renkli kutucuğu kaldırmak için
+    static readonly System.Drawing.Color TransparentColor = System.Drawing.Color.Transparent;
+
+    // Soru 2: çapraz filtrede seçili OLMAYAN öğelerin rengi (Power BI'daki solma)
+    const string DimHex = "#c9c9c9";
+    static readonly System.Drawing.Color DimDrawColor = System.Drawing.Color.FromArgb(0xc9, 0xc9, 0xc9);
+
+    // NOT: Eski RaporGorusRenkleri / GorusSeviyeRenkleri / AksiyonDurumRenkleri sabit
+    // listeleri kaldırıldı. Paletler artık LoadAsync içinde DimPalette() ile
+    // CategoryValue.Color alanından üretiliyor — böylece çapraz filtre solması
+    // otomatik olarak paletin içine giriyor ve renkler tek yerde tanımlı kalıyor.
 
     // TODO(db): gerçek aksiyon durumu dağılımını LoadAsync içinde doldurun
     static readonly List<CategoryValue> AksiyonDurumu = new()
@@ -525,6 +594,109 @@
     int bulguToplam;
     int subeBulguToplam;
 
+    // ==============================================================================
+    // SORU 2 — ÇAPRAZ FİLTRE (Power BI davranışı)
+    //
+    // Dilimleyiciler (sol raydaki Plan Yılı / Risk / Portföy) VERİYİ filtreler.
+    // Çapraz filtre ise bir GÖRSELE tıklamakla oluşur: tıklanan değer diğer
+    // görselleri filtreler ve tıklanan görselde diğer renkler solar.
+    // Bu ikisini ayrı tutmak önemli — aynı state'i paylaşsalar tıklama
+    // dilimleyiciyi sessizce değiştirir ve kullanıcı neyi filtrelediğini şaşırır.
+    // ==============================================================================
+    RiskLevel? crossRisk;          // Bulgu seviyesi / plan yılı grafiklerinden
+    string? crossGorus;            // Rapor Genel Görüşü pastası
+    string? crossGorusSeviye;      // Rapor Görüş Seviyeleri pastası
+    string? crossAksiyon;          // Aksiyon Durumu pastası
+
+    /// <summary>Bir seri seçiliyse seçili olmayanlar soluk gri döner.</summary>
+    System.Drawing.Color RiskColor(RiskLevel r)
+        => crossRisk is null || crossRisk == r ? BaseRiskColor(r) : DimDrawColor;
+
+    static System.Drawing.Color BaseRiskColor(RiskLevel r) => r switch
+    {
+        RiskLevel.Yuksek => RedColor,
+        RiskLevel.Orta => OrangeColor,
+        _ => TealColor
+    };
+
+    /// <summary>Pasta/treemap paletlerinde seçili olmayanları soluklaştırır.</summary>
+    static List<string> DimPalette(IEnumerable<CategoryValue> items, string? selected)
+        => items.Select(i => selected is null || i.Label == selected ? i.Color : DimHex).ToList();
+
+    // Paletler LoadAsync içinde hesaplanır (her render'da yeni List üretmemek için —
+    // yeni referans DevExpress grafiğini sıfırdan yükletiyor)
+    List<string> raporGorusPalette = new();
+    List<string> gorusSeviyePalette = new();
+    List<string> aksiyonDurumPalette = new();
+
+    /// <summary>Bulgu Seviyeleri grafiği için 3 ayrı seri modeli.</summary>
+    public record RiskBar(string Label, double? Yuksek, double? Orta, double? Dusuk);
+    List<RiskBar> bulguSeviyeBars = new();
+
+    /// <summary>Grafik serisine tıklanınca: aynı seriye tekrar tıklamak filtreyi kaldırır.</summary>
+    async Task OnRiskSeriesClickAsync(string? seriesName)
+    {
+        var clicked = seriesName switch
+        {
+            "Yüksek" => RiskLevel.Yuksek,
+            "Orta" => RiskLevel.Orta,
+            "Düşük" => RiskLevel.Dusuk,
+            _ => (RiskLevel?)null
+        };
+        if (clicked is null) return;
+
+        crossRisk = crossRisk == clicked ? null : clicked;
+        await LoadAsync();
+    }
+
+    // ---- Pasta grafik tıklamaları -------------------------------------------------
+    // args.Point.Argument tıklanan dilimin etiketini verir. Aynı dilime tekrar
+    // tıklamak filtreyi kaldırır (Power BI davranışı).
+    async Task OnGorusClickAsync(string? label)
+    {
+        crossGorus = (label is null || crossGorus == label) ? null : label;
+        await LoadAsync();
+    }
+
+    async Task OnGorusSeviyeClickAsync(string? label)
+    {
+        crossGorusSeviye = (label is null || crossGorusSeviye == label) ? null : label;
+        await LoadAsync();
+    }
+
+    async Task OnAksiyonClickAsync(string? label)
+    {
+        crossAksiyon = (label is null || crossAksiyon == label) ? null : label;
+        await LoadAsync();
+    }
+
+    /// <summary>Sol raydaki "Grafik Seçimi" çipleri için: (etiket, temizleme işlemi).</summary>
+    IEnumerable<(string Label, Func<Task> Clear)> ActiveCrossFilters()
+    {
+        if (crossRisk is not null)
+            yield return (RiskName(crossRisk.Value), () => OnRiskSeriesClickAsync(RiskName(crossRisk!.Value)));
+        if (crossGorus is not null)
+            yield return (crossGorus, () => OnGorusClickAsync(crossGorus));
+        if (crossGorusSeviye is not null)
+            yield return (crossGorusSeviye, () => OnGorusSeviyeClickAsync(crossGorusSeviye));
+        if (crossAksiyon is not null)
+            yield return (crossAksiyon, () => OnAksiyonClickAsync(crossAksiyon));
+    }
+
+    void ClearCrossFilters()
+    {
+        crossRisk = null;
+        crossGorus = null;
+        crossGorusSeviye = null;
+        crossAksiyon = null;
+    }
+
+    async Task ClearCrossFiltersAsync()
+    {
+        ClearCrossFilters();
+        await LoadAsync();
+    }
+
     CancellationTokenSource? cts;
 
     protected override async Task OnInitializedAsync()
@@ -563,10 +735,25 @@
         subeler = Repo.Subeler
             .Where(s => denetimTuru is null || s.DenetimTuru == denetimTuru)
             .Where(s => riskLevels.Contains(s.Risk))
+            .Where(s => crossRisk is null || s.Risk == crossRisk)      // çapraz filtre
             .Where(s => string.IsNullOrWhiteSpace(_search)
                         || s.SubeAdi.Contains(_search, StringComparison.CurrentCultureIgnoreCase)
                         || s.DenetimTuru.Contains(_search, StringComparison.CurrentCultureIgnoreCase))
             .ToList();
+
+        // ---- Bulgu Seviyeleri: tek listeden 3 seriye ---------------------------
+        // Her satırda yalnız bir sütun dolu; böylece her risk seviyesi kendi
+        // rengine ve kendi tıklama olayına sahip bir seri olur.
+        bulguSeviyeBars = Repo.SubeBulguSeviyeleri.Select(c => new RiskBar(
+            c.Label,
+            c.Label == "Yüksek" ? c.Value : null,
+            c.Label == "Orta" ? c.Value : null,
+            c.Label == "Düşük" ? c.Value : null)).ToList();
+
+        // ---- Çapraz filtre paletleri ------------------------------------------
+        raporGorusPalette   = DimPalette(Repo.RaporGenelGorusu, crossGorus);
+        gorusSeviyePalette  = DimPalette(Repo.RaporGorusSeviyeleri, crossGorusSeviye);
+        aksiyonDurumPalette = DimPalette(AksiyonDurumu, crossAksiyon);
 
         kpis = BuildKpis();
 
@@ -630,6 +817,7 @@
         portfoy = TumuText;
         denetimTuru = null;
         _search = string.Empty;
+        ClearCrossFilters();
         lastRefresh = DateTime.Now;
         await LoadAsync();
     }
