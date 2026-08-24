@@ -1,0 +1,452 @@
+@page "/bulgu-asistani"
+@using DevExpress.Blazor
+@using TeftisAsistani.Models
+@using TeftisAsistani.Services
+@inject IAuditAiService Ai
+@inject IFindingDocxExporter Exporter
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="noc-page">
+
+    <header class="noc-header">
+        <div class="noc-brand">
+            <span class="noc-brand-name">Teftiş Asistanı</span>
+            <span class="noc-brand-sub">İç Denetim</span>
+        </div>
+        <div class="noc-spacer"></div>
+
+        <div class="noc-lang">
+            <span class="noc-lang-label">Çıktı dili</span>
+            <div class="noc-seg">
+                @foreach (var lang in AppLanguage.All)
+                {
+                    <button type="button"
+                            class="@("noc-seg-opt" + (_lang == lang.Code ? " is-active" : ""))"
+                            @onclick="() => SetLanguage(lang.Code)">
+                        @lang.Display
+                    </button>
+                }
+            </div>
+        </div>
+
+        <div class="noc-user">
+            <div class="noc-avatar">@Initials</div>
+            <span class="noc-user-role">Müfettiş</span>
+        </div>
+    </header>
+
+    <div class="noc-body">
+
+        <aside class="noc-aside">
+            <div class="noc-group">
+                <span class="noc-eyebrow">Çalışma alanı</span>
+                <button type="button" class="@TabClass(WorkspaceMode.Prompts)" @onclick="() => _mode = WorkspaceMode.Prompts">
+                    <span>Hazır Promptlar</span>
+                    <span class="noc-tab-sub">Metin üzerinde AI kontrolleri</span>
+                </button>
+                <button type="button" class="@TabClass(WorkspaceMode.Finding)" @onclick="() => _mode = WorkspaceMode.Finding">
+                    <span>Bulgu Tablosu</span>
+                    <span class="noc-tab-sub">Şablonu AI ile doldur</span>
+                </button>
+            </div>
+
+            @if (_mode == WorkspaceMode.Prompts)
+            {
+                <div class="noc-group">
+                    <span class="noc-eyebrow">Prompt kütüphanesi</span>
+                    @foreach (var p in PromptLibrary.Items)
+                    {
+                        <button type="button"
+                                class="@("noc-prompt" + (_selectedPromptId == p.Id ? " is-active" : ""))"
+                                @onclick="() => PickPrompt(p)">
+                            <span class="noc-prompt-title">@p.Title</span>
+                            <span class="noc-prompt-hint">@p.Hint</span>
+                        </button>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="noc-group noc-group-lg">
+                    <span class="noc-eyebrow">Aktarım tercihleri</span>
+
+                    <DxCheckBox @bind-Checked="_keepCriterion" CssClass="noc-check">
+                        Girilen kriter paraphrase edilmeden aktarılsın.
+                    </DxCheckBox>
+
+                    <DxCheckBox @bind-Checked="_keepDraft" CssClass="noc-check">
+                        Bulgu taslağı paraphrase edilmeden aktarılsın.
+                    </DxCheckBox>
+
+                    <div class="noc-rule"></div>
+
+                    <span class="noc-eyebrow">AI'ın üreteceği alanlar</span>
+                    <div class="noc-tags">
+                        @foreach (var f in FindingTemplate.GeneratedFields)
+                        {
+                            <span class="tag tag-outline">@f</span>
+                        }
+                    </div>
+                </div>
+            }
+
+            <div class="noc-spacer"></div>
+            <p class="noc-note">AI çıktıları taslaktır; rapora aktarılmadan önce müfettiş onayı gerekir.</p>
+        </aside>
+
+        <main class="noc-main">
+
+            @if (_mode == WorkspaceMode.Prompts)
+            {
+                <div class="noc-cols">
+                    <section class="noc-col noc-col-input">
+                        <div>
+                            <h1 class="noc-h1">Metin üzerinde AI kontrolü</h1>
+                            <p class="noc-sub">Metni girin, soldan bir prompt seçin, gerekirse promptu düzenleyip gönderin.</p>
+                        </div>
+
+                        <div class="noc-panel">
+                            <div class="noc-panel-head">
+                                <span class="noc-panel-title">Metin</span>
+                                <span class="noc-panel-meta">@(_text?.Length ?? 0) karakter</span>
+                            </div>
+                            <DxMemo @bind-Text="_text"
+                                    NullText="İnceleme notunuzu veya bulgu metninizi buraya yazın…"
+                                    CssClass="noc-memo noc-memo-lg"
+                                    ResizeMode="MemoResizeMode.Vertical"
+                                    BindValueMode="BindValueMode.OnInput" />
+                        </div>
+
+                        <div class="noc-panel">
+                            <div class="noc-panel-head">
+                                <span class="noc-panel-title">Prompt</span>
+                                <span class="noc-panel-accent">@ActivePromptTitle</span>
+                            </div>
+                            <DxMemo @bind-Text="_promptText"
+                                    NullText="Soldan bir prompt seçin — burada görünecek ve düzenleyebileceksiniz."
+                                    CssClass="noc-memo noc-memo-sm"
+                                    ResizeMode="MemoResizeMode.Vertical"
+                                    BindValueMode="BindValueMode.OnInput" />
+                            <div class="noc-panel-foot">
+                                <DxButton RenderStyle="ButtonRenderStyle.None"
+                                          CssClass="btn btn-primary"
+                                          Enabled="@CanRunPrompt"
+                                          Click="RunPromptAsync"
+                                          Text="@(_running ? "Gönderiliyor…" : "AI'a gönder")" />
+                                <DxButton RenderStyle="ButtonRenderStyle.None"
+                                          CssClass="btn btn-ghost"
+                                          Enabled="@(_selectedPromptId is not null)"
+                                          Click="ResetPrompt"
+                                          Text="Promptu sıfırla" />
+                                <div class="noc-spacer"></div>
+                                <span class="noc-panel-meta">Çıktı: @LanguageDisplay</span>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="noc-col noc-col-preview">
+                        <div class="noc-col-head">
+                            <h2 class="noc-h2">AI sonucu</h2>
+                            <span class="noc-panel-meta">@ResultMeta</span>
+                        </div>
+
+                        <div class="noc-result">
+                            @if (_running)
+                            {
+                                <div class="noc-skeleton">
+                                    @foreach (var w in new[] { 70, 96, 84, 60 })
+                                    {
+                                        <div class="noc-skeleton-line" style="width:@(w)%"></div>
+                                    }
+                                </div>
+                            }
+                            else if (_result is null)
+                            {
+                                <div class="noc-empty">
+                                    Sonuç burada görünecek.<br />
+                                    Prompt seçip <span class="noc-accent">AI'a gönder</span>'e basın.
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="noc-result-body">
+                                    <span class="noc-eyebrow noc-eyebrow-accent">@_result.Heading</span>
+                                    <p class="noc-result-text">@_result.Body</p>
+                                    @if (_result.Notes.Count > 0)
+                                    {
+                                        <div class="noc-notes">
+                                            <span class="noc-panel-meta">@(_lang == "en" ? "Notes" : "Notlar")</span>
+                                            @foreach (var n in _result.Notes)
+                                            {
+                                                <div class="noc-note-row"><span class="noc-dash">—</span><span>@n</span></div>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        <div class="noc-actions">
+                            <DxButton RenderStyle="ButtonRenderStyle.None"
+                                      CssClass="btn btn-secondary"
+                                      Enabled="@(_result is not null)"
+                                      Click="CopyResultAsync"
+                                      Text="@(_copied ? "Kopyalandı" : "Sonucu kopyala")" />
+                        </div>
+                    </section>
+                </div>
+            }
+            else
+            {
+                <div class="noc-cols">
+                    <section class="noc-col noc-col-input">
+                        <div>
+                            <h1 class="noc-h1">Bulgu tablosu oluştur</h1>
+                            <p class="noc-sub">Kriter ve bulgu taslağını girin; AI şablondaki alanları doldurur.</p>
+                        </div>
+
+                        <div class="noc-panel">
+                            <div class="noc-panel-head">
+                                <span class="noc-panel-title">Kriter</span>
+                                <span class="noc-panel-meta">Mevzuat / prosedür maddesi</span>
+                            </div>
+                            <DxMemo @bind-Text="_criterion"
+                                    NullText="Örn. Bankacılık Kanunu md. 23 / İç Kontrol Prosedürü 4.2 — ilgili maddenin metni…"
+                                    CssClass="noc-memo noc-memo-md"
+                                    ResizeMode="MemoResizeMode.Vertical"
+                                    BindValueMode="BindValueMode.OnInput" />
+                        </div>
+
+                        <div class="noc-panel">
+                            <div class="noc-panel-head">
+                                <span class="noc-panel-title">Bulgu taslağı</span>
+                                <span class="noc-panel-meta">@(_draft?.Length ?? 0) karakter</span>
+                            </div>
+                            <DxMemo @bind-Text="_draft"
+                                    NullText="Tespit ettiğiniz durumu serbest metin olarak yazın…"
+                                    CssClass="noc-memo noc-memo-lg"
+                                    ResizeMode="MemoResizeMode.Vertical"
+                                    BindValueMode="BindValueMode.OnInput" />
+                        </div>
+
+                        <div class="noc-actions">
+                            <DxButton RenderStyle="ButtonRenderStyle.None"
+                                      CssClass="btn btn-primary"
+                                      Enabled="@CanGenerate"
+                                      Click="GenerateTableAsync"
+                                      Text="@(_generating ? "Oluşturuluyor…" : "AI ile oluştur")" />
+                            <DxButton RenderStyle="ButtonRenderStyle.None"
+                                      CssClass="btn btn-ghost"
+                                      Click="ClearFinding"
+                                      Text="Alanları temizle" />
+                            <div class="noc-spacer"></div>
+                            <span class="noc-panel-meta">@PrefsLabel</span>
+                        </div>
+                    </section>
+
+                    <section class="noc-col noc-col-table">
+                        <div class="noc-col-head">
+                            <h2 class="noc-h2">Önizleme</h2>
+                            <span class="noc-panel-meta">@TableMeta</span>
+                        </div>
+
+                        <div class="noc-preview-frame">
+                            @if (_generating)
+                            {
+                                <div class="noc-table-skeleton">
+                                    @foreach (var w in new[] { 40, 90, 90, 70, 85, 55, 80 })
+                                    {
+                                        <div class="noc-skeleton-line" style="width:@(w)%"></div>
+                                    }
+                                </div>
+                            }
+                            else if (_table is null)
+                            {
+                                <div class="noc-table-empty">
+                                    Şablon önizlemesi<br />
+                                    Kriter ve taslağı girip <span class="noc-accent">AI ile oluştur</span>'a basın.
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="noc-doc">
+                                    <div class="noc-doc-head">
+                                        <span class="noc-doc-title">@_table.Title</span>
+                                        <span class="noc-doc-no">@_table.FindingNo</span>
+                                    </div>
+                                    <table class="noc-doc-table">
+                                        <tbody>
+                                            @foreach (var row in _table.Rows)
+                                            {
+                                                <tr>
+                                                    <td class="noc-doc-key">@row.Label</td>
+                                                    <td class="noc-doc-val">@row.Value</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        </div>
+
+                        <div class="noc-actions">
+                            <DxButton RenderStyle="ButtonRenderStyle.None"
+                                      CssClass="btn btn-primary"
+                                      Enabled="@(_table is not null && !_generating)"
+                                      Click="DownloadDocxAsync"
+                                      Text="Word olarak indir (.docx)" />
+                        </div>
+
+                        <p class="noc-note">Tablo, rapor şablonundaki yatay bulgu formatıyla aynı ölçülerde üretilir.</p>
+                    </section>
+                </div>
+            }
+
+        </main>
+    </div>
+</div>
+
+@code {
+    private enum WorkspaceMode { Prompts, Finding }
+
+    private WorkspaceMode _mode = WorkspaceMode.Prompts;
+    private string _lang = "tr";
+
+    // Prompt workspace
+    private string _text = string.Empty;
+    private string _promptText = string.Empty;
+    private string? _selectedPromptId;
+    private PromptResult? _result;
+    private bool _running;
+    private bool _copied;
+
+    // Finding workspace
+    private string _criterion = string.Empty;
+    private string _draft = string.Empty;
+    private bool _keepCriterion = true;
+    private bool _keepDraft;
+    private bool _generating;
+    private FindingTable? _table;
+
+    private CancellationTokenSource? _cts;
+
+    private string Initials => "MK";
+    private string LanguageDisplay => AppLanguage.Display(_lang);
+    private bool CanRunPrompt => !_running && !string.IsNullOrWhiteSpace(_promptText) && !string.IsNullOrWhiteSpace(_text);
+    private bool CanGenerate => !_generating && !string.IsNullOrWhiteSpace(_criterion) && !string.IsNullOrWhiteSpace(_draft);
+    private string ActivePromptTitle =>
+        PromptLibrary.Items.FirstOrDefault(p => p.Id == _selectedPromptId)?.Title ?? "Prompt seçilmedi";
+    private string ResultMeta => _result is null ? "—" : $"{LanguageDisplay} · taslak";
+    private string TableMeta => _table is null ? "—" : $"500 × oto · {LanguageDisplay}";
+    private string PrefsLabel =>
+        (_keepCriterion ? "Kriter birebir" : "Kriter paraphrase") + " · " +
+        (_keepDraft ? "taslak birebir" : "taslak paraphrase");
+
+    private string TabClass(WorkspaceMode m) => "noc-tab" + (_mode == m ? " is-active" : "");
+
+    private void SetLanguage(string code)
+    {
+        if (_lang == code) return;
+        _lang = code;
+        if (_selectedPromptId is not null)
+        {
+            var p = PromptLibrary.Items.First(x => x.Id == _selectedPromptId);
+            _promptText = PromptLibrary.Compose(p, _lang);
+        }
+    }
+
+    private void PickPrompt(PromptDefinition p)
+    {
+        _selectedPromptId = p.Id;
+        _promptText = PromptLibrary.Compose(p, _lang);
+    }
+
+    private void ResetPrompt()
+    {
+        var p = PromptLibrary.Items.FirstOrDefault(x => x.Id == _selectedPromptId);
+        _promptText = p is null ? string.Empty : PromptLibrary.Compose(p, _lang);
+    }
+
+    private async Task RunPromptAsync()
+    {
+        if (!CanRunPrompt) return;
+        _running = true;
+        _result = null;
+        _copied = false;
+
+        _cts?.Cancel();
+        _cts = new CancellationTokenSource();
+
+        try
+        {
+            _result = await Ai.RunPromptAsync(new PromptRequest(
+                PromptId: _selectedPromptId!,
+                Prompt: _promptText,
+                Text: _text,
+                Language: _lang), _cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            _running = false;
+        }
+    }
+
+    private async Task CopyResultAsync()
+    {
+        if (_result is null) return;
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", _result.Body);
+        _copied = true;
+        StateHasChanged();
+        await Task.Delay(1600);
+        _copied = false;
+    }
+
+    private async Task GenerateTableAsync()
+    {
+        if (!CanGenerate) return;
+        _generating = true;
+        _table = null;
+
+        _cts?.Cancel();
+        _cts = new CancellationTokenSource();
+
+        try
+        {
+            _table = await Ai.BuildFindingTableAsync(new FindingRequest(
+                Criterion: _criterion,
+                Draft: _draft,
+                KeepCriterionVerbatim: _keepCriterion,
+                KeepDraftVerbatim: _keepDraft,
+                Language: _lang), _cts.Token);
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            _generating = false;
+        }
+    }
+
+    private void ClearFinding()
+    {
+        _criterion = string.Empty;
+        _draft = string.Empty;
+        _table = null;
+    }
+
+    private async Task DownloadDocxAsync()
+    {
+        if (_table is null) return;
+        var bytes = Exporter.Export(_table);
+        using var stream = new MemoryStream(bytes);
+        using var streamRef = new DotNetStreamReference(stream);
+        await JS.InvokeVoidAsync("teftisAsistani.downloadFile", $"{_table.FindingNo}.docx", streamRef);
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}
