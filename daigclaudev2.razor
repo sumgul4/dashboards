@@ -1,0 +1,173 @@
+@page "/bulgu-asistani"
+@* ---------------------------------------------------------------
+   Sadece MARKUP yenilendi. Binding / alan / metot adları birebir aynı:
+   SelectedPrompt, CustomPrompt, MarkdownResult, _createFindingTable,
+   _isLoading, _finding, _copied, _richEdit, ParaphraseCriteria,
+   ParaphraseFinding, SelectedLanguage, LanguageOptions, ReadyPrompts,
+   BulguTablosuAjani, DraftPrompts, StepClass(), GetHint(), CanSend,
+   SendToVlmAsync(), SelectPrompt(), CopyResultAsync(), DownloadDocxAsync(),
+   RenderMarkdown(), findingPopupVisible, OnFindingSelectedAsync()
+   Mevcut @code bloğunuzu bu dosyanın altına AYNEN bırakın.
+--------------------------------------------------------------- *@
+
+<div class="ai-page">
+
+    @* ================= 1 · PROMPT ================= *@
+    <div class="prompt-panel @StepClass(1)">
+        <div class="panel-head">
+            <h5 class="panel-title"><span class="step-badge">1</span>Hazır Prompt Seçimi</h5>
+        </div>
+
+        <div class="panel-scroll">
+            <div class="prompt-card agent-card @(SelectedPrompt == BulguTablosuAjani ? "selected" : "")"
+                 @onclick="() => SelectPrompt(BulguTablosuAjani)">
+                <span class="agent-content">
+                    <span class="robot">🤖</span>
+                    <span class="agent-text">
+                        <span class="agent-title">@BulguTablosuAjani?.Title</span>
+                        <span class="agent-sub">Kriter + taslaktan bulgu tablosu üretir</span>
+                    </span>
+                </span>
+            </div>
+
+            <div class="section-label">Taslak Promptlar</div>
+
+            <DxAccordion CssClass="prompt-accordion">
+                <Items>
+                    <DxAccordionItem Text="Taslak Promptlar" Expanded="true">
+                        <Items>
+                            @foreach (var prompt in DraftPrompts)
+                            {
+                                <DxAccordionItem Text="@(SelectedPrompt == prompt ? $"🔹 {prompt.Title}" : prompt.Title)"
+                                                 Click="@(() => SelectPrompt(prompt))" />
+                            }
+                        </Items>
+                    </DxAccordionItem>
+                </Items>
+            </DxAccordion>
+
+            <div class="section-label">Prompt Düzenle</div>
+            <div class="field-shell">
+                <DxMemo @bind-Text="CustomPrompt"
+                        Rows="10"
+                        CssClass="prompt-memo"
+                        NullText="Bir prompt seçin veya buraya talimat yazın..."
+                        Enabled="!_createFindingTable" />
+            </div>
+            @if (_createFindingTable)
+            {
+                <p class="panel-note">Bulgu Tablosu Ajanı seçili — prompt sistem tarafından yönetilir.</p>
+            }
+        </div>
+    </div>
+
+    @* ================= 2 · İÇERİK ================= *@
+    <div class="center-panel @StepClass(2)">
+        <div class="panel-head">
+            <h5 class="panel-title"><span class="step-badge">2</span>Bulgu İçeriği</h5>
+            <span class="hint">@GetHint(SelectedPrompt)</span>
+        </div>
+
+        <div class="editor-toolbar">
+            <DxButton Text="Bulgu Seç"
+                      RenderStyle="ButtonRenderStyle.None"
+                      CssClass="ui-btn ui-btn-secondary"
+                      Click="@(() => { findingPopupVisible = true; })" />
+            <span class="toolbar-hint">veya doğrudan aşağıya yazın · eklenen metin ve görseller sıralı işlenir</span>
+        </div>
+
+        <div class="editor-shell">
+            <DxRichEdit @ref="_richEdit" CssClass="finding-editor" ViewType="ViewType.Simple" />
+        </div>
+
+        <div class="divider-bar">
+            <div class="lang-group">
+                <label class="bar-label">Yanıt Dili</label>
+                <DxRadioGroup Items="@LanguageOptions"
+                              @bind-Value="SelectedLanguage"
+                              Layout="RadioGroupLayout.Horizontal"
+                              SizeMode="SizeMode.Small"
+                              CssClass="lang-radio" />
+            </div>
+
+            <span class="vr-divider-dikey"></span>
+
+            <div class="filter-group">
+                <DxCheckBox @bind-Checked="@ParaphraseCriteria" CssClass="footer-checkbox">
+                    Kriteri olduğu gibi yaz (Parafraz etme)
+                </DxCheckBox>
+                <DxCheckBox @bind-Checked="@ParaphraseFinding" CssClass="footer-checkbox">
+                    Bulgu taslağını olduğu gibi yaz (Parafraz etme)
+                </DxCheckBox>
+            </div>
+
+            <span class="bar-spacer"></span>
+
+            <DxButton Text="VLM'e Gönder"
+                      RenderStyle="ButtonRenderStyle.None"
+                      CssClass="ui-btn ui-btn-primary send-button"
+                      Enabled="@CanSend"
+                      Click="SendToVlmAsync"
+                      SizeMode="SizeMode.Large" />
+        </div>
+    </div>
+
+    @* ================= 3 · SONUÇ ================= *@
+    <div class="right-panel @StepClass(3)" id="rightPanel">
+        <div class="resize-handle" id="resizeHandle" title="Genişliği ayarlamak için sürükleyin"></div>
+
+        <div class="result-header">
+            <h5 class="panel-title"><span class="step-badge">3</span>VLM Sonucu</h5>
+            <span class="bar-spacer"></span>
+
+            @if (!_createFindingTable)
+            {
+                @if (_copied)
+                {
+                    <span class="copied-badge">Kopyalandı</span>
+                }
+                <DxButton Text="Kopyala"
+                          RenderStyle="ButtonRenderStyle.None"
+                          CssClass="ui-btn ui-btn-ghost"
+                          Click="CopyResultAsync"
+                          Enabled="@(!string.IsNullOrWhiteSpace(MarkdownResult))" />
+            }
+            else
+            {
+                <span class="result-tag">Tablo Önizleme</span>
+                <DxButton Text="Word İndir"
+                          RenderStyle="ButtonRenderStyle.None"
+                          CssClass="ui-btn ui-btn-primary"
+                          Click="DownloadDocxAsync"
+                          Enabled="@(_finding is not null)" />
+            }
+        </div>
+
+        <div class="markdown-result @(_createFindingTable ? "is-document" : "")">
+            @if (_isLoading)
+            {
+                <div class="loading-indicator">
+                    <span class="spinner"></span>
+                    <span>@_loadingMessage</span>
+                </div>
+            }
+            else if (!string.IsNullOrWhiteSpace(MarkdownResult))
+            {
+                @((MarkupString)RenderMarkdown(MarkdownResult))
+            }
+            else
+            {
+                <div class="fa-empty-state">
+                    <div class="fa-empty-icon">✦</div>
+                    <p>Hazır bir prompt seçin veya <strong>Bulgu Tablosu Ajanı</strong> ile taslak bulgunuzu tablolaştırın.</p>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@* Mevcut bulgu seçme popup'ınız (findingPopupVisible / OnFindingSelectedAsync) buraya olduğu gibi kalır. *@
+
+@code {
+    // ⚠ Mevcut @code bloğunuzu buraya AYNEN yapıştırın — hiçbir alan/metot değişmedi.
+}
