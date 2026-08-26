@@ -1,0 +1,669 @@
+@* ============================================================================
+   Bulgu Asistanı — Teftiş Kurulu
+   Görsel katman yeniden düzenlendi; değişken ve metot adları korunmuştur.
+   Stil dosyası: BulguAsistani.razor.css (CSS isolation)
+   ============================================================================ *@
+
+@page "/bulgu-asistani"
+@using System.Data
+@using System.Text.Json
+@using System.Text.RegularExpressions
+@using DevExpress.Blazor
+@using DevExpress.Blazor.RichEdit
+@using Dapper
+@inject IJSRuntime JS
+@* @inject ... _db / _global / Env  → projenizdeki gerçek servis tipleriyle doldurun *@
+
+<div class="ai-page" data-step="@CurrentStep">
+
+    @* ─────────────────────────  ADIM 1 — Prompt  ───────────────────────── *@
+    <section class="panel prompt-panel @StepClass(1)" aria-labelledby="stepTitle1">
+        <header class="panel-head">
+            <span class="step-badge" aria-hidden="true">1</span>
+            <div class="head-text">
+                <h2 class="panel-title" id="stepTitle1">Prompt seçimi</h2>
+                <p class="panel-sub">Bir ajan ya da taslak prompt seçin</p>
+            </div>
+        </header>
+
+        <div class="panel-body">
+            @* Ana ajan — sayfanın imza öğesi *@
+            <button type="button"
+                    class="agent-card @(SelectedPrompt == BulguTablosuAjani ? "is-selected" : "")"
+                    @onclick="() => SelectPrompt(BulguTablosuAjani)"
+                    aria-pressed="@(SelectedPrompt == BulguTablosuAjani)">
+                <span class="agent-mark" aria-hidden="true">TK</span>
+                <span class="agent-text">
+                    <span class="agent-eyebrow">Ajan</span>
+                    <span class="agent-title">@BulguTablosuAjani?.Title</span>
+                    <span class="agent-desc">Kriter ve taslaktan bulgu tablosu üretir</span>
+                </span>
+                <span class="agent-state" aria-hidden="true"></span>
+            </button>
+
+            <div class="rule-label">Taslak promptlar</div>
+
+            <div class="prompt-list">
+                @foreach (var prompt in DraftPrompts)
+                {
+                    <button type="button"
+                            class="prompt-item @(SelectedPrompt == prompt ? "is-selected" : "")"
+                            @key="prompt.Bipkodint"
+                            @onclick="() => SelectPrompt(prompt)"
+                            aria-pressed="@(SelectedPrompt == prompt)">
+                        <span class="prompt-index">@prompt.Bipkodint.ToString("00")</span>
+                        <span class="prompt-text">@prompt.Title</span>
+                    </button>
+                }
+            </div>
+
+            <div class="rule-label">Prompt düzeni</div>
+
+            <DxMemo @bind-Text="CustomPrompt"
+                    CssClass="prompt-memo"
+                    Rows="9"
+                    NullText="Bir prompt seçin veya buraya talimat yazın…"
+                    Enabled="!_createFindingTable" />
+
+            @if (_createFindingTable)
+            {
+                <p class="memo-note">Ajan kendi sistem promptunu kullanır; bu alan devre dışıdır.</p>
+            }
+        </div>
+    </section>
+
+    @* ─────────────────────────  ADIM 2 — İçerik  ───────────────────────── *@
+    <section class="panel center-panel @StepClass(2)" aria-labelledby="stepTitle2">
+        <header class="panel-head">
+            <span class="step-badge" aria-hidden="true">2</span>
+            <div class="head-text">
+                <h2 class="panel-title" id="stepTitle2">Bulgu içeriği</h2>
+                <p class="panel-sub">@GetHint(SelectedPrompt)</p>
+            </div>
+            <DxButton Text="Bulgu seç"
+                      RenderStyle="ButtonRenderStyle.Secondary"
+                      CssClass="btn-ghost"
+                      Click="@(() => { findingPopupVisible = true; })" />
+        </header>
+
+        <div class="panel-body editor-body">
+            <p class="editor-note">Eklenen metin ve görseller yazıldıkları sırayla işlenir.</p>
+
+            <DxRichEdit @ref="_richEdit"
+                        CssClass="finding-editor"
+                        ViewType="ViewType.Simple" />
+        </div>
+
+        <footer class="panel-foot">
+            <div class="foot-group">
+                <span class="foot-label">Yanıt dili</span>
+                <DxRadioGroup Items="@LanguageOptions"
+                              @bind-Value="SelectedLanguage"
+                              Layout="RadioGroupLayout.Horizontal"
+                              CssClass="lang-radio"
+                              SizeMode="SizeMode.Small" />
+            </div>
+
+            <div class="foot-group foot-checks">
+                <DxCheckBox @bind-Checked="@ParaphraseCriteria" CssClass="foot-check">
+                    Kriteri olduğu gibi yaz
+                </DxCheckBox>
+                <DxCheckBox @bind-Checked="@ParaphraseFinding" CssClass="foot-check">
+                    Bulgu taslağını olduğu gibi yaz
+                </DxCheckBox>
+            </div>
+
+            <DxButton Text="VLM'e gönder"
+                      CssClass="btn-send"
+                      Enabled="@CanSend"
+                      Click="SendToVlmAsync"
+                      SizeMode="SizeMode.Large" />
+        </footer>
+    </section>
+
+    @* ─────────────────────────  ADIM 3 — Sonuç  ───────────────────────── *@
+    <section class="panel right-panel @StepClass(3)" id="rightPanel" aria-labelledby="stepTitle3">
+        <div class="resize-handle" id="resizeHandle" title="Genişliği ayarlamak için sürükleyin"></div>
+
+        <header class="panel-head">
+            <span class="step-badge" aria-hidden="true">3</span>
+            <div class="head-text">
+                <h2 class="panel-title" id="stepTitle3">VLM sonucu</h2>
+                <p class="panel-sub">@(_createFindingTable ? "Tablo önizlemesi" : "Ham çıktı")</p>
+            </div>
+
+            <div class="head-actions">
+                @if (!_createFindingTable)
+                {
+                    @if (_copied)
+                    {
+                        <span class="copied-flag" role="status">Kopyalandı</span>
+                    }
+                    <DxButton Text="Kopyala"
+                              CssClass="btn-ghost"
+                              Click="CopyResultAsync"
+                              Enabled="@(!string.IsNullOrWhiteSpace(MarkdownResult))" />
+                }
+                else
+                {
+                    <DxButton Text="Word indir"
+                              CssClass="btn-ghost"
+                              Click="DownloadDocxAsync"
+                              Enabled="@(_finding is not null)" />
+                }
+            </div>
+        </header>
+
+        <div class="panel-body markdown-result" aria-live="polite">
+            @if (_isLoading)
+            {
+                <div class="loading-indicator">
+                    <span class="spinner" aria-hidden="true"></span>
+                    <span class="loading-text">@_loadingMessage</span>
+                </div>
+            }
+            else if (!string.IsNullOrWhiteSpace(MarkdownResult))
+            {
+                @((MarkupString)RenderMarkdown(MarkdownResult))
+            }
+            else
+            {
+                <div class="empty-state">
+                    <span class="empty-rule" aria-hidden="true"></span>
+                    <p class="empty-title">Henüz sonuç yok</p>
+                    <p class="empty-body">
+                        Soldan bir prompt seçin, ya da <strong>Bulgu Tablosu Ajanı</strong> ile
+                        taslağınızı tabloya çevirin.
+                    </p>
+                </div>
+            }
+        </div>
+    </section>
+</div>
+
+@* ─────────────────────────  Bulgu seçim popup'ı  ───────────────────────── *@
+<DxPopup @bind-Visible="findingPopupVisible"
+         HeaderText="Bulgu seç"
+         Width="880px"
+         ShowFooter="false"
+         CssClass="finding-popup">
+    <BodyContentTemplate>
+        @* TODO: Buraya mevcut bulgu listesi bileşeninizi (DxGrid vb.) yerleştirin.
+           Satır seçildiğinde: await OnFindingSelectedAsync(secilenFindingModel);
+                               findingPopupVisible = false; *@
+    </BodyContentTemplate>
+</DxPopup>
+
+@code {
+    private DxRichEdit? _richEdit;
+
+    private PromptItem? SelectedPrompt;
+    private string? CustomPrompt;
+    private string? MarkdownResult;
+    private string? RenderedMarkdown;
+    private bool _isLoading = false;
+    private bool _createFindingTable = false;
+    private string SelectedLanguage { get; set; } = "TR";
+    private FindingResultModel? _finding;
+    private string _loadingMessage = "Analiz ediliyor...";
+    private bool _toolsLoading = true;
+    private bool _copied = false;
+    private bool _paraphraseCriteria = false;
+    private bool _paraphraseFinding = false;
+
+    // Markup'ta kullanılan iki bağlama adı için köprü property'ler.
+    // (Alanlar korunmuştur; @bind-Checked bir property gerektirdiği için eklendi.)
+    private bool ParaphraseCriteria
+    {
+        get => _paraphraseCriteria;
+        set => _paraphraseCriteria = value;
+    }
+
+    private bool ParaphraseFinding
+    {
+        get => _paraphraseFinding;
+        set => _paraphraseFinding = value;
+    }
+
+    private enum WorkspaceMode { Prompts, Finding }
+    private WorkspaceMode _mode = WorkspaceMode.Prompts;
+    private string _text = string.Empty;
+
+    IEnumerable<Model_SimuleEdilenKullanici>? SimuleEdilenKullanici { get; set; }
+
+    //Popup
+    private bool findingPopupVisible;
+
+    private List<string> LanguageOptions = new()
+    {
+        "TR",
+        "EN"
+    };
+
+    private List<PromptItem> ReadyPrompts = new()
+    {
+        new("Metni özetle", 1),
+        new("“Risk & Etki” tanımı yap ve öneriler geliştir", 2),
+        new("Bulguyu 5C kriterine göre değerlendir", 3),
+        new("Bulgunun seviyesini belirle", 4),
+        new("Bulgunun risk kategorisini belirle", 5),
+        new("Kök nedenleri çıkar ve taksonomi ile eşleştir", 7),
+        new("Bulgu özetleri tablosunu oluştur", 8),
+        new("Gramer kontrolü yap", 9),
+        new("COSO ile eşleştir", 6),
+        new("Bulgu Tablosu Ajanı", -1)
+    };
+
+    private PromptItem? BulguTablosuAjani =>
+        ReadyPrompts.FirstOrDefault(x => x.Bipkodint == -1);
+
+    private IEnumerable<PromptItem> DraftPrompts =>
+        ReadyPrompts.Where(x => x.Bipkodint != -1);
+
+    // SelectedPrompt yoksa 1, sonuç/yükleme varsa 3, aradaysa 2
+    private int CurrentStep =>
+        SelectedPrompt is null ? 1
+        : (_isLoading || !string.IsNullOrWhiteSpace(MarkdownResult)) ? 3
+        : 2;
+
+    private string StepClass(int step) =>
+        CurrentStep == step ? "step-active"
+        : CurrentStep > step ? "step-done"
+        : "step-upcoming";   // henüz sırası gelmedi → soluk ama tıklanabilir
+
+    private bool CanSend => SelectedPrompt is not null && !_isLoading;
+
+    // ── Prompt Şablonları (DB'den yüklenir) ──────────────────────────────────
+    private string _step1SystemPrompt = string.Empty;
+    private string _step2SystemPrompt = string.Empty;
+
+    // ── API Sabitleri ────────────────────────────────────────────────────────
+    private const string API_URL = "https://apisix-gateway-gpudtx.kuveytturk.com.tr/vllm-qwen35-397b-a17b-fp8/v1/chat/completions";
+    private const string API_MODEL = "/data/models--Qwen--Qwen3.5-397B-A17B-FP8";
+
+    protected override async Task OnInitializedAsync()
+    {
+        const string q = "WEB.SimuleEdilenKullanicilar_SP";
+        DynamicParameters prm = new();
+        prm.Add("@Kullanici", _global.User_Kullanici, DbType.String);
+        SimuleEdilenKullanici = await _db.GetAllData<Model_SimuleEdilenKullanici, dynamic>(q, prm);
+        _global.User_Kullanici = SimuleEdilenKullanici.FirstOrDefault()?.Kullanici;
+
+        await _global.KullaniciSatiri();
+
+        // FindingTableRenderer.WebRootPath = Env.WebRootPath;
+        await LoadToolsAndPromptsAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await JS.InvokeVoidAsync("auditAgent.initResize");
+    }
+
+    private async Task SelectPrompt(PromptItem prompt)
+    {
+        MarkdownResult = string.Empty;
+        SelectedPrompt = prompt;
+        if (prompt.Bipkodint > 0)
+        {
+            const string qry = @"select bipaciklamaing
+                                 from dbo.bipcodeparameters
+                                 where bipturu = 'LLM Prompts'
+                                 and bipkodint = @bipkodint";
+            var prm = new DynamicParameters();
+            prm.Add("@bipkodint", prompt.Bipkodint, DbType.Int32);
+
+            //manuel alana yapıştır
+            CustomPrompt = await _db.GetScalar(qry, prm, CommandType.Text) as String;
+            _createFindingTable = false;
+        }
+        else
+        {
+            CustomPrompt = String.Empty;
+            _createFindingTable = true;
+        }
+    }
+
+    private string RenderMarkdown(string markdown)
+    {
+        //var decoded = System.Net.WebUtility.HtmlDecode(markdown);
+        return markdown;
+    }
+
+    private async Task LoadToolsAndPromptsAsync()
+    {
+        try
+        {
+            var prompt1row = await _global.getAPIContent("FINDING_ASSISTANT_STEP1");
+            _step1SystemPrompt = prompt1row.Prompt;
+
+            var prompt2row = await _global.getAPIContent("FINDING_ASSISTANT_STEP2");
+            _step2SystemPrompt = prompt2row.Prompt;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+        finally
+        {
+            _toolsLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SendToVlmAsync()
+    {
+        _isLoading = true;
+        _finding = null;
+        MarkdownResult = null;
+        RenderedMarkdown = string.Empty;
+        StateHasChanged();
+
+        try
+        {
+            using var httpClient = new HttpClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(120);
+
+            var client = new QwenApiClient(httpClient, API_URL, API_MODEL);
+
+            // RichEdit içeriğini sıralı (metin + resim) parçalara böl
+            var contentParts = await GetOrderedContentPartsAsync();
+
+            if (_createFindingTable)
+            {
+                await RunFindingAsync(client, contentParts);
+            }
+            else
+            {
+                await RunToolAsync(client, contentParts);
+            }
+        }
+        catch (Exception ex)
+        {
+            MarkdownResult = $"<p style='color:red;'>Hata: {System.Net.WebUtility.HtmlEncode(ex.Message)}</p>";
+            Console.WriteLine(ex);
+        }
+        finally
+        {
+            _isLoading = false;
+            _loadingMessage = "Analiz ediliyor...";
+            StateHasChanged();
+        }
+    }
+
+    private async Task RunFindingAsync(QwenApiClient client, List<RichContentPart> parts)
+    {
+        // ---------- STEP 1: sadece metin ----------
+        var step1Raw = await client.SendFindingAsync(
+            systemPrompt: _step1SystemPrompt,
+            userContent: parts,
+            language: SelectedLanguage,
+            outputFormat: "JSON",
+            temperature: 0.35);
+
+        if (!FindingJsonParser.TryParse(step1Raw, out var finding, out _) || finding is null)
+        {
+            MarkdownResult = WrapPreformatted(
+                FindingJsonParser.Clean(step1Raw ?? string.Empty, isHtml: false));
+            return;
+        }
+
+        // ---------- STEP 2 hazırlık ----------
+        _loadingMessage = "Step 2: Risk taksonomisi yükleniyor...";
+        StateHasChanged();
+
+        var riskBlock = await RiskTaxonomyService.GetPromptBlockAsync(_db);
+        var taslakText = string.Join("\n",
+            parts.Where(p => p.Type == "text" && !string.IsNullOrWhiteSpace(p.Text))
+                 .Select(p => p.Text));
+
+        var userMessage = PromptBuilder.BuildStep2Prompt(finding, taslakText, riskBlock);
+
+        _loadingMessage = "Step 2: Risk ve kök neden sınıflandırılıyor...";
+        StateHasChanged();
+
+        // ---------- STEP 2 + doğrulama/retry ----------
+        Step2ResultModel? step2 = null;
+        RiskTaxonomyRowModel? riskRow = null;
+        string? kokNeden = null;
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var content = new List<RichContentPart> { new() { Type = "text", Text = userMessage } };
+
+            var raw = await client.SendFindingAsync(
+                systemPrompt: _step2SystemPrompt,
+                userContent: content,
+                language: SelectedLanguage,
+                outputFormat: "JSON",
+                temperature: 0.0,
+                maxTokens: 350,
+                repetitionPenalty: 1.0,
+                contentHeader: null);
+
+            FindingJsonParser.TryParseStep2(raw, out step2, out _);
+
+            riskRow = await RiskTaxonomyService.ResolveAsync(_db, step2?.RiskL4Id);
+            kokNeden = RootCauseCatalog.Resolve(step2?.KokNedenId);
+
+            var l4Bad = step2?.RiskL4Id is { Length: > 0 } && riskRow is null;
+            var knBad = step2?.KokNedenId is { Length: > 0 } && kokNeden is null;
+
+            if (!l4Bad && !knBad) break;
+
+            _loadingMessage = "Step 2: Geçersiz kod alındı, yeniden deneniyor...";
+            StateHasChanged();
+
+            userMessage += "\n\n" + PromptBuilder.BuildRetryMessage(
+                l4Bad ? step2?.RiskL4Id : null,
+                knBad ? step2?.KokNedenId : null);
+        }
+
+        if (riskRow is not null)
+        {
+            finding.RiskL1 = riskRow.Level1;
+            finding.RiskL2 = riskRow.Level2;
+            finding.RiskL3 = riskRow.Level3;
+            finding.RiskL4 = riskRow.Level4;
+        }
+        else
+        {
+            finding.RiskL1 = finding.RiskL2 = finding.RiskL3 = finding.RiskL4 = null;
+            Console.WriteLine($"[Step2] Risk kodu çözümlenemedi: {step2?.RiskL4Id ?? "(null)"}");
+        }
+
+        finding.KokNedenGerekcesi = Truncate(step2?.KokNedenGerekce, 300);
+        finding.RiskGerekcesi = Truncate(step2?.RiskL4Gerekce, 300);
+        finding.KokNeden = kokNeden;
+        if (kokNeden is not null) TaxonomyParser.ParseRootCause(finding);
+
+        _finding = finding;
+        MarkdownResult = WordReportService.GeneratePreviewHtml(finding);
+    }
+
+    private static string? Truncate(string? s, int max) =>
+        string.IsNullOrWhiteSpace(s) ? null
+        : s.Trim().Length <= max ? s.Trim()
+        : s.Trim()[..max] + "…";
+
+    /// <summary>Seçili yardımcı aracın promptunu VLM'e gönderir; sonucu ham metin olarak gösterir.</summary>
+    private async Task RunToolAsync(QwenApiClient client, List<RichContentPart> parts)
+    {
+        if (string.IsNullOrWhiteSpace(CustomPrompt))
+        {
+            MarkdownResult = "<p style='color:red'>Prompt boş</p>";
+            return;
+        }
+
+        _loadingMessage = $"Yardımcı prompt çalıştırılıyor...";
+        StateHasChanged();
+
+        // Araç sistem promptu + isteğe bağlı ek talimat
+        var systemPrompt = CustomPrompt;
+
+        var raw = await client.SendFindingAsync(
+            systemPrompt: systemPrompt,
+            userContent: parts,
+            language: SelectedLanguage,
+            outputFormat: "HTML");
+
+        // MarkdownResult = StripThinking(raw ?? string.Empty);
+        MarkdownResult = FindingJsonParser.Clean(raw ?? string.Empty, isHtml: true);
+    }
+
+    private static readonly Regex _attrs =
+        new(@"\s+(style|class|lang|width|height|align|valign|border|cellpadding|cellspacing)\s*=\s*(""[^""]*""|'[^']*')",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static string StripHtmlNoise(string html)
+    {
+        html = Regex.Replace(html, @"<(style|script)[\s\S]*?</\1>", "", RegexOptions.IgnoreCase);
+        html = Regex.Replace(html, @"</?(html|head|body|meta|link|title|span|font|o:p)[^>]*>", "", RegexOptions.IgnoreCase);
+        html = _attrs.Replace(html, "");
+        html = html.Replace("&nbsp;", " ");
+        return Regex.Replace(html, @"\s{2,}", " ");
+    }
+
+    private async Task<List<RichContentPart>> GetOrderedContentPartsAsync()
+    {
+        if (_richEdit is null)
+            return new List<RichContentPart> { new RichContentPart { Type = "text", Text = "" } };
+
+        byte[] htmlBytes = await _richEdit.ExportDocumentAsync(DocumentFormat.Html);
+        string html = System.Text.Encoding.UTF8.GetString(htmlBytes);
+
+        html = StripHtmlNoise(html);
+
+        return RichEditHtmlParser.Parse(html);
+    }
+
+    private async Task CopyResultAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(MarkdownResult))
+        {
+            await JS.InvokeVoidAsync("copyHtmlToClipboard", MarkdownResult);
+        }
+
+        _copied = true;
+        StateHasChanged();
+
+        // 2 saniye sonra kaybolsun
+        await Task.Delay(2000);
+
+        _copied = false;
+        StateHasChanged();
+    }
+
+    private async Task DownloadDocxAsync()
+    {
+        if (_finding is null)
+            return;
+
+        var fileBytes = WordReportService.GenerateDocument(_finding);
+
+        using var stream = new MemoryStream(fileBytes);
+        using var streamRef = new DotNetStreamReference(stream);
+
+        var module = await JS.InvokeAsync<IJSObjectReference>(
+            "import", "./js/downloadHelper.js");
+
+        await module.InvokeVoidAsync(
+            "downloadFromStream",
+            "denetim_raporu.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            streamRef);
+    }
+
+    public static Step2ResultModel? ParseStep2(string raw)
+    {
+        try
+        {
+            var json = FindingJsonParser.Clean(raw, isHtml: false);
+            return JsonSerializer.Deserialize<Step2ResultModel>(json);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private string BuildStep2SystemPrompt(List<string> l4List)
+    {
+        var basePrompt = _step2SystemPrompt;
+
+        var l4Section = RiskTaxonomyService.FormatForPrompt(l4List);
+
+        var l4Block = l4Section is not null
+            ? $"Aşağıdaki seçeneklerden SADECE BİRİNİ seç:\n{l4Section}"
+            : "Bu bulgu için tanımlı L4 kategorisi bulunmamaktadır. \"RiskL4\" alanını null bırak.";
+
+        // {{L4_LIST}} işaretçisini dinamik blokla değiştir
+        return basePrompt.Replace("{{L4_LIST}}", l4Block);
+    }
+
+    /// <summary>Düz metni &lt;pre&gt; içinde sarmalar (JSON olmayan araç yanıtları için).</summary>
+    private static string WrapPreformatted(string text) =>
+        $"<pre style=\"white-space:pre-wrap;font-family:inherit;\">{System.Net.WebUtility.HtmlEncode(text)}</pre>";
+
+    private string GetHint(PromptItem? prompt)
+    {
+        if (prompt == null)
+            return "Soldan bir prompt seçerek başlayın.";
+
+        return prompt.Bipkodint switch
+        {
+            1 => "Özetlemek istediğiniz metni girin.",          // özetleme
+            9 => "Gramer kontrolü yapılacak metni girin.",      // gramer kontrolü
+            6 => "COSO ile eşleştirilecek aksiyon metnini girin.", // COSO
+            -1 => "Kriter ve bulgu taslağını girin.",
+            _ => "Bulgu metnini girin."
+        };
+    }
+
+    private async Task OnFindingSelectedAsync(FindingModel d)
+    {
+        if (_richEdit is null) return;
+
+        var html = $"""
+        <p><strong>Bulgu Taslağı:</strong></p>
+        <p>{System.Net.WebUtility.HtmlEncode(d.BulguDetayiRTF)}</p>
+        """;
+
+        if (string.IsNullOrWhiteSpace(d.BulguDetayiRTF))
+        {
+            // İçerik yoksa boş şablon yükle
+            var empty = System.Text.Encoding.UTF8.GetBytes(
+                "<p><strong>Bulgu Taslağı:</strong></p><p></p>");
+            await _richEdit.LoadDocumentAsync(empty, DocumentFormat.Html);
+            return;
+        }
+
+        // RTF, Windows-1254 (Turkish) kodlamasıyla saklanır
+        var bytes = System.Text.Encoding.GetEncoding(1254).GetBytes(d.BulguDetayiRTF);
+        await _richEdit.LoadDocumentAsync(bytes, DocumentFormat.Rtf);
+    }
+
+    private void SetLanguage(string language)
+    {
+        SelectedLanguage = language;
+    }
+
+    private string TabClass(WorkspaceMode m) => "noc-tab" + (_mode == m ? " is-active" : "");
+
+    public class DenetimModel
+    {
+        public string incelenen_aktivite { get; set; }
+        public string odak { get; set; }
+        public string bulgu_seviyesi { get; set; }
+        public string kriter { get; set; }
+        public string gozlem { get; set; }
+        public string potansiyel_risk { get; set; }
+        public string oneri { get; set; }
+        public string yonetim_cevabi { get; set; }
+        public string risk_kategorisi_kod { get; set; }
+        public string kok_neden { get; set; }
+    }
+
+    private record PromptItem(string Title, int Bipkodint);
+}
