@@ -196,6 +196,157 @@
                         </div>
                     </section>
                 </div>
+
+                @* =========================================================================
+   Teftiş Asistanı — <main class="noc-main"> içindeki PROMPT MODU bloğu.
+   CSS: noc-* sınıfları (BulguAsistani/TeftisAsistani.razor.css)
+   ========================================================================= *@
+
+    <div class="noc-cols">
+
+        @* ---------- Sol sütun: metin + prompt ---------- *@
+        <section class="noc-col noc-col-input">
+
+            <div>
+                <h1 class="noc-h1">Metin üzerinde AI kontrolü</h1>
+                <p class="noc-sub">Metni girin, soldan bir prompt seçin, gerekirse promptu düzenleyip gönderin.</p>
+            </div>
+
+            @* --- Metin paneli: DxRichEdit --- *@
+            <div class="noc-panel">
+                <div class="noc-panel-head">
+                    <span class="noc-panel-title">Metin</span>
+                    <div class="noc-head-actions">
+                        <DxButton Text="Bulgu Seç"
+                                  RenderStyle="ButtonRenderStyle.None"
+                                  CssClass="btn btn-secondary btn-sm"
+                                  Click="@(() => { findingPopupVisible = true; })" />
+                        <span class="noc-panel-meta">@(_text?.Length ?? 0) karakter</span>
+                    </div>
+                </div>
+
+                <div class="noc-editor-toolbar">
+                    <div class="noc-tb-group">
+                        <DxButton RenderStyle="ButtonRenderStyle.None" CssClass="noc-tb-btn noc-tb-bold"
+                                  Text="B" Title="Kalın"
+                                  Click="@(() => _richEdit.ExecuteCommandAsync(RichEditCommandId.ToggleFontBold))" />
+                        <DxButton RenderStyle="ButtonRenderStyle.None" CssClass="noc-tb-btn noc-tb-italic"
+                                  Text="I" Title="İtalik"
+                                  Click="@(() => _richEdit.ExecuteCommandAsync(RichEditCommandId.ToggleFontItalic))" />
+                        <DxButton RenderStyle="ButtonRenderStyle.None" CssClass="noc-tb-btn noc-tb-underline"
+                                  Text="U" Title="Altı çizili"
+                                  Click="@(() => _richEdit.ExecuteCommandAsync(RichEditCommandId.ToggleFontUnderline))" />
+                    </div>
+
+                    <span class="noc-tb-divider"></span>
+
+                    <div class="noc-tb-group">
+                        <DxButton RenderStyle="ButtonRenderStyle.None" CssClass="noc-tb-btn"
+                                  Text="•" Title="Madde listesi"
+                                  Click="@(() => _richEdit.ExecuteCommandAsync(RichEditCommandId.ToggleBulletedList))" />
+                        <DxButton RenderStyle="ButtonRenderStyle.None" CssClass="noc-tb-btn"
+                                  Text="1." Title="Numaralı liste"
+                                  Click="@(() => _richEdit.ExecuteCommandAsync(RichEditCommandId.ToggleNumberedList))" />
+                        <DxButton RenderStyle="ButtonRenderStyle.None" CssClass="noc-tb-btn"
+                                  Text="🖼" Title="Görsel ekle"
+                                  Click="@(() => _richEdit.ExecuteCommandAsync(RichEditCommandId.InsertPicture))" />
+                        <DxButton RenderStyle="ButtonRenderStyle.None" CssClass="noc-tb-btn"
+                                  Text="⌫" Title="Biçimi temizle"
+                                  Click="@(() => _richEdit.ExecuteCommandAsync(RichEditCommandId.ClearFormatting))" />
+                    </div>
+
+                    <span class="noc-spacer"></span>
+                    <span class="noc-panel-meta">Metin ve görseller sıralı işlenir</span>
+                </div>
+
+                <div class="noc-paper-wrap">
+                    <DxRichEdit @ref="_richEdit"
+                                CssClass="noc-paper"
+                                ViewType="ViewType.Simple"
+                                RibbonVisible="false"
+                                ShowConfirmOnLosingChanges="false" />
+                </div>
+            </div>
+
+            @* --- Prompt paneli --- *@
+            <div class="noc-panel">
+                <div class="noc-panel-head">
+                    <span class="noc-panel-title">Prompt</span>
+                    <span class="noc-panel-accent">@ActivePromptTitle</span>
+                </div>
+
+                <DxMemo @bind-Text="CustomPrompt"
+                        CssClass="noc-memo noc-memo-sm"
+                        NullText="Soldan bir prompt seçin — burada görünecek ve düzenleyebileceksiniz."
+                        ResizeMode="MemoResizeMode.Vertical"
+                        BindValueMode="BindValueMode.OnInput" />
+
+                <div class="noc-panel-foot">
+                    <DxButton RenderStyle="ButtonRenderStyle.None"
+                              CssClass="btn btn-primary"
+                              Enabled="@CanSend"
+                              Click="SendToVlmAsync"
+                              Text="@(_isLoading ? "Gönderiliyor…" : "AI'a gönder")" />
+                    <DxButton RenderStyle="ButtonRenderStyle.None"
+                              CssClass="btn btn-ghost"
+                              Enabled="@(SelectedPrompt is not null)"
+                              Click="ResetPrompt"
+                              Text="Promptu sıfırla" />
+                    <span class="noc-spacer"></span>
+                    <span class="noc-panel-meta">Çıktı: @SelectedLanguage</span>
+                </div>
+            </div>
+        </section>
+
+        @* ---------- Sağ sütun: AI sonucu ---------- *@
+        <section class="noc-col noc-col-preview">
+
+            <div class="noc-col-head">
+                <h2 class="noc-h2">AI sonucu</h2>
+                <span class="noc-panel-meta">@ResultMeta</span>
+            </div>
+
+            <div class="noc-result">
+                @if (_isLoading)
+                {
+                    <div class="noc-skeleton">
+                        @foreach (var w in new[] { 70, 96, 84, 60 })
+                        {
+                            <div class="noc-skeleton-line" style="width:@(w)%"></div>
+                        }
+                    </div>
+                }
+                else if (!string.IsNullOrWhiteSpace(MarkdownResult))
+                {
+                    <div class="noc-result-body">
+                        @((MarkupString)RenderMarkdown(MarkdownResult))
+                    </div>
+                }
+                else
+                {
+                    <div class="noc-empty">
+                        Sonuç burada görünecek.<br />
+                        Prompt seçip <span class="noc-accent">AI'a gönder</span>'e basın.
+                    </div>
+                }
+            </div>
+
+            <div class="noc-actions">
+                <DxButton RenderStyle="ButtonRenderStyle.None"
+                          CssClass="btn btn-secondary"
+                          Enabled="@(!string.IsNullOrWhiteSpace(MarkdownResult))"
+                          Click="CopyResultAsync"
+                          Text="@(_copied ? "Kopyalandı" : "Sonucu kopyala")" />
+                <DxButton RenderStyle="ButtonRenderStyle.None"
+                          CssClass="btn btn-ghost"
+                          Enabled="@(!string.IsNullOrWhiteSpace(MarkdownResult))"
+                          Click="ApplyResultAsync"
+                          Text="Metne uygula" />
+            </div>
+        </section>
+    </div>
+}
+//*************************************************************//
             }
             else
             {
