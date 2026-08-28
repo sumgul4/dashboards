@@ -1,0 +1,379 @@
+/* =========================================================================
+   Bulgu Ajanı — görsel düzeltmeler
+   Mevcut finding-agent.razor.css dosyanızın SONUNA ekleyin (aynı scope'ta
+   olduğu için ::deep kuralları çalışır). Eski kuralları silmeniz gerekmez;
+   buradaki seçiciler aynı özgüllükte veya daha yüksek ve sonra geldikleri
+   için kazanır. Palet birebir korunmuştur.
+   ========================================================================= */
+
+/* --- 1. Kaydırma yeri: sayfa değil, sütunlar --------------------------------
+   Sorun: .noc-main overflow-y:auto olduğu için h1 kaydırınca üstten kesiliyor
+   ve iki sütun birlikte kayıyor. Çözüm: main sabit, her sütun kendi içinde
+   kayıyor. */
+.noc-main {
+    overflow: hidden;
+}
+
+.noc-cols {
+    height: 100%;
+    min-height: 0;
+    align-items: stretch;
+}
+
+.noc-col {
+    min-height: 0;
+}
+
+.noc-col-input {
+    overflow-y: auto;
+    padding-right: 6px; /* scrollbar payı */
+}
+
+.noc-col-preview,
+.noc-col-table {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+/* Sütun başlığı sabit kalsın, altındaki içerik kaysın */
+.noc-col-head {
+    flex: 0 0 auto;
+    padding-bottom: 2px;
+}
+
+
+/* --- 2. AI sonucu kutusu ---------------------------------------------------
+   Sorun: .noc-result beyaz, padding'siz, yuvarlatılmamış ve içerik kadar
+   yükseliyor; boş durumda ince bir şerit gibi görünüyor. */
+.noc-result {
+    flex: 1 1 auto;
+    min-height: 0;
+    border-radius: 8px;
+    padding: 18px 20px;
+    overflow-y: auto;
+    background: #fff;
+}
+
+/* Boş ve yükleniyor durumları BEYAZ olmasın — koyu, kesikli çerçeveli yer
+   tutucu. Razor tarafında bu iki durumda .noc-result yerine
+   .noc-result.is-placeholder kullanın (tek satır değişiklik):
+       <div class="@("noc-result" + (_isLoading || string.IsNullOrWhiteSpace(MarkdownResult) ? " is-placeholder" : ""))"> */
+.noc-result.is-placeholder {
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    border: 1px dashed #595d6c;
+    background: #1b1c25;
+    box-shadow: none;
+}
+
+.noc-result.is-placeholder .noc-skeleton {
+    width: 100%;
+    place-self: start stretch;
+}
+
+.noc-empty {
+    color: #9397ab;
+    font-size: 12.5px;
+    line-height: 1.6;
+    text-align: center;
+}
+
+/* Sonucun altındaki aksiyon satırı sabit kalsın */
+.noc-col-preview .noc-actions,
+.noc-col-table .noc-actions {
+    flex: 0 0 auto;
+    padding-top: 12px;
+}
+
+
+/* --- 3. Markdown çıktısının rengi -----------------------------------------
+   Sorun: dışarıdan gelen markdown CSS'i yeşil başlık / mavi callout gibi
+   palet dışı renkler basıyor. Beyaz kağıt içinde nötr + accent'e çekiyoruz. */
+.noc-result-body ::deep h1,
+.noc-result-body ::deep h2,
+.noc-result-body ::deep h3,
+.noc-result-body ::deep h4 {
+    color: #14161f !important;
+}
+
+.noc-result-body ::deep blockquote,
+.noc-result-body ::deep .callout,
+.noc-result-body ::deep .alert {
+    margin: 8px 0;
+    border: 0;
+    border-left: 2px solid #9184d9 !important;
+    border-radius: 0 6px 6px 0;
+    padding: 10px 12px;
+    background: #f4f3fb !important;
+    color: #1b1b1f !important;
+}
+
+.noc-result-body ::deep ul,
+.noc-result-body ::deep ol {
+    margin: 4px 0;
+    padding-left: 20px;
+}
+
+.noc-result-body ::deep li + li {
+    margin-top: 4px;
+}
+
+.noc-result-body ::deep li::marker {
+    color: #6b6f80;
+}
+
+
+/* --- 4. DxRichEdit: sağ taraf görünmüyor  ⚠ DÜZELTİLDİ -------------------
+   ÖNEMLİ: bu bölümün ilk sürümündeki `width:100% !important` kuralları
+   HATALIYDI — RichEdit sayfa genişliğini kendi modelinden hesaplar, zorla
+   daraltınca içerik kırpılıyor ve yatay kaydırma kayboluyor.
+
+   ASIL ÇÖZÜM CSS DEĞİL, TEK BİR PARAMETRE — razor tarafında:
+       <DxRichEdit ViewType="ViewType.Simple" ... />
+   Simple görünümde metin kağıt genişliği yerine kapsayıcıya sarar; hiçbir
+   şey kırpılmaz ve yatay kaydırmaya ihtiyaç kalmaz. (using
+   DevExpress.Blazor.RichEdit)
+
+   Kağıt görünümünü (ViewType.PrintLayout) korumak isterseniz genişliği
+   ezmeyin, sadece kaydırmaya izin verin: */
+.noc-main ::deep .noc-paper .dxbl-richedit,
+.noc-main ::deep .noc-paper .dxbl-richedit-surface {
+    max-width: 100%;
+    overflow: auto; /* yatay kaydırma geri geldi */
+}
+
+/* Editör yüksekliği: sabit px yerine esnek, ama kaydırma payı bırakarak */
+.noc-main ::deep .noc-paper {
+    height: clamp(200px, 34vh, 360px);
+}
+
+
+/* --- 5. Bulgu tablosu önizlemesi ------------------------------------------
+   Sorun: tablo 500px'lik çerçeveye sıkıştığı için "COSO Bileşeni" gibi
+   başlıklar harf harf alt alta kırılıyor. Çözüm: gerçek genişlik + yatay
+   kaydırma; kelime içi kırma yalnızca gerçekten gerekince. */
+/* --- 11. Markdown CSS'inin sayfaya sızması  ⚠ ASIL SORUN ------------------
+   Belirti: kendi h1'iniz soluk görünüyor, düz metindeki sayılar mavi,
+   italikler renkli. Neden: markdown / kod-vurgulama stil dosyası App.razor
+   (veya _Host.cshtml) içinde GLOBAL yükleniyor; seçicileri `h1`, `p`, `code`,
+   `.hljs-number` gibi çıplak etiketler olduğu için tüm sayfayı boyuyor.
+
+   CSS ile tam çözüm YOK — global bir sheet'i sonradan kapsamlamak gerekir.
+   İKİ SAĞLAM YOL:
+
+   A) @scope (önerilen, .NET 10 + Chromium/Edge). Global <link>'i KALDIRIN ve
+      markdown css'ini kendi dosyanıza sarın:
+          @import url("css/markdown.css") layer(md);   ← YANLIŞ, kapsamlamaz
+      Yerine markdown.css'i wwwroot/css/markdown.scoped.css olarak kopyalayıp
+      tüm içeriğini şuna sarın:
+          @scope (.noc-result-body) { ...markdown.css içeriği... }
+      Böylece kurallar yalnızca sonuç kutusunun içinde geçerli olur.
+
+   B) @scope kullanamıyorsanız: markdown çıktısını izole edin — sonucu bir
+      shadow root'a ya da srcdoc'lu bir <iframe>'e basın; global sheet o
+      ağaca hiç ulaşmaz. (En kesin, ama kopyalama/seçim davranışı değişir.)
+
+   Geçici perde: aşağıdaki kurallar sizin sayfanızdaki metinleri markdown
+   sheet'inin ezmesine karşı geri alır. Kalıcı çözüm A veya B'dir. */
+.noc-page h1,
+.noc-page h2,
+.noc-page h3 {
+    color: #e9e9ed;
+    font-family: Inter, 'Segoe UI', system-ui, sans-serif;
+    font-weight: 500;
+}
+
+.noc-page :is(p, span, label, li, td, th, button, textarea, input):not(.noc-result-body *) {
+    color: inherit;
+    font-family: inherit;
+    font-style: normal;
+}
+
+.noc-page :is(code, pre, em, i, strong, b):not(.noc-result-body *) {
+    color: inherit;
+    background: none;
+    font-family: inherit;
+}
+
+
+.noc-preview-frame {
+    padding: 0;
+    overflow: auto;
+    background: #1d1e28;
+}
+
+.noc-preview-frame ::deep table {
+    min-width: 820px;
+    table-layout: fixed;
+    border: 0;
+}
+
+.noc-preview-frame ::deep th,
+.noc-preview-frame ::deep td {
+    word-break: normal;
+    overflow-wrap: anywhere;
+    hyphens: auto;
+}
+
+.noc-preview-frame ::deep th {
+    white-space: nowrap;
+}
+
+.noc-preview-frame ::deep td:first-child {
+    width: auto;
+}
+
+.noc-preview-frame .noc-result-body {
+    padding: 16px;
+}
+
+/* Sabit 500px'ler esnesin */
+.noc-doc,
+.noc-table-empty {
+    width: 100%;
+    max-width: 720px;
+}
+
+.noc-table-empty {
+    margin: 16px;
+    min-height: 220px;
+    border-radius: 8px;
+}
+
+
+/* --- 6. DevExpress checkbox ------------------------------------------------
+   Sorun: işaretsiz kutular bembeyaz; koyu yüzeyde leke gibi duruyor. */
+.noc-aside ::deep .noc-check .dxbl-checkbox {
+    --dxbl-checkbox-bg: #1f2029;
+    --dxbl-checkbox-color: #e4e7f5;
+    --dxbl-checkbox-border-color: #595d6c;
+    --dxbl-checkbox-hover-border-color: #796cbf;
+    --dxbl-checkbox-checked-bg: #9184d9;
+    --dxbl-checkbox-checked-border-color: #9184d9;
+    --dxbl-checkbox-checked-color: #14161f;
+    --dxbl-checkbox-border-radius: 4px;
+}
+
+.noc-aside ::deep .noc-check input[type="checkbox"] {
+    accent-color: #9184d9;
+}
+
+
+/* --- 7. Scrollbar'lar ------------------------------------------------------
+   Sorun: koyu arayüzde açık renk sistem scrollbar'ları (özellikle önizleme
+   çerçevesinde) göze batıyor. */
+.noc-page,
+.noc-page ::deep * {
+    scrollbar-color: #4a4d5c transparent;
+    scrollbar-width: thin;
+}
+
+.noc-page ::-webkit-scrollbar,
+.noc-page ::deep ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.noc-page ::-webkit-scrollbar-track,
+.noc-page ::deep ::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.noc-page ::-webkit-scrollbar-thumb,
+.noc-page ::deep ::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: #4a4d5c;
+    background-clip: content-box;
+}
+
+.noc-page ::-webkit-scrollbar-thumb:hover,
+.noc-page ::deep ::-webkit-scrollbar-thumb:hover {
+    background: #6b6f80;
+    background-clip: content-box;
+}
+
+/* Beyaz kağıt ve beyaz sonuç kutusu için açık scrollbar */
+.noc-main ::deep .noc-paper *,
+.noc-result {
+    scrollbar-color: #c9c9d1 transparent;
+}
+
+
+/* --- 8. Buton hizası ve düğme yüksekliği ----------------------------------
+   Sorun: aksiyon satırında farklı yüksekliklerde butonlar; "AI'a gönder"
+   devre dışıyken görünmez gibi. */
+.noc-page ::deep .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    line-height: 1.2;
+    background: transparent;
+    transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+}
+
+.noc-page ::deep .btn:disabled {
+    opacity: .5;
+    border-color: #4a4d5c;
+    color: #8b8fa2;
+}
+
+.noc-page ::deep .btn-primary {
+    background: #221f38;
+}
+
+.noc-page ::deep .btn-primary:active:not(:disabled) {
+    background: #2b2650 !important;
+}
+
+
+/* --- 9. Panel ritmi -------------------------------------------------------
+   Küçük ama görünür düzeltmeler: panel başlığı ile içeriği arasındaki
+   boşluk, DxMemo'nun panelin köşelerine oturması. */
+.noc-panel {
+    background: #1f2029;
+}
+
+.noc-panel-head {
+    background: #22232c;
+}
+
+.noc-main ::deep .noc-memo textarea {
+    padding: 12px 14px;
+    border-radius: 0 0 8px 8px;
+}
+
+.noc-paper-wrap {
+    padding: 12px;
+    background: #1b1c25;
+}
+
+
+/* --- 10. 1080px altı -------------------------------------------------------
+   Dar ekranda sütun kaydırmasını kapat, sayfayı kaydır. */
+@media (max-width: 1080px) {
+    .noc-main {
+        overflow-y: auto;
+    }
+
+    .noc-cols {
+        height: auto;
+    }
+
+    .noc-col-input,
+    .noc-col-preview,
+    .noc-col-table {
+        overflow: visible;
+        max-height: none;
+    }
+
+    .noc-result {
+        max-height: 60vh;
+    }
+}
