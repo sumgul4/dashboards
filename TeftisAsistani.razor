@@ -1,0 +1,650 @@
+@page "/agents/finding-agent"
+@* @page "/"   *@
+
+@layout EmptyLayout
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JS
+@inject IDataAccess _db
+@inject IWebHostEnvironment Env
+@using JsonSerializer = System.Text.Json.JsonSerializer
+@using Markdig
+@using Container.Helpers
+@using System.Text.RegularExpressions
+@inject GlobalDegiskenler _global
+
+@if (_global.User_Sector == "Teftiş Kurulu")
+{
+    <PageTitle>Bulgu Ajanı</PageTitle>
+
+    <div class="noc-page @(_theme == "light" ? "theme-light" : "")">
+
+        <header class="noc-header">
+            <div class="noc-brand">
+                <span class="noc-brand-name">Bulgu Asistanı</span>
+                <span class="noc-brand-sub">D3</span>
+            </div>
+            <div class="noc-spacer"></div>
+
+            <div class="noc-lang">
+                <span class="noc-lang-label">Çıktı dili</span>
+                <div class="noc-seg">
+                    @foreach (var lang in LanguageOptions)
+                    {
+                        <button type="button"
+                                class="@("noc-seg-opt" + (SelectedLanguage == lang.ToString() ? " is-active" : ""))"
+                                @onclick="() => SelectedLanguage = lang.ToString()">
+                            @lang.ToString()
+                        </button>
+                    }
+                </div>
+            </div>
+
+            <button type="button" class="noc-theme-btn"
+                    title="@(_theme == "light" ? "Koyu temaya geç" : "Açık temaya geç")"
+                    @onclick="@(() => _theme = _theme == "light" ? "dark" : "light")">
+                <span>@(_theme == "light" ? "☾" : "☀")</span>
+                <span>@(_theme == "light" ? "Koyu" : "Açık")</span>
+            </button>
+
+            <div class="noc-user">
+                <span class="noc-user-role">@_global.User_AdSoyad</span>
+            </div>
+        </header>
+
+        <div class="noc-body">
+            <aside class="noc-aside">
+                <div class="noc-group">
+                    <span class="noc-eyebrow">Çalışma alanı</span>
+                    <button type="button" class="@TabClass(WorkspaceMode.Prompts)" @onclick="() => _mode = WorkspaceMode.Prompts">
+                        <span>Hazır Promptlar</span>
+                        <span class="noc-tab-sub">Metin üzerinde AI kontrolleri</span>
+                    </button>
+                    <button type="button" class="@TabClass(WorkspaceMode.Finding)" @onclick="() => _mode = WorkspaceMode.Finding">
+                        <span>Bulgu Tablosu</span>
+                        <span class="noc-tab-sub">Şablonu AI ile doldur</span>
+                    </button>
+                </div>
+
+                @if (_mode == WorkspaceMode.Prompts)
+                {
+                    <div class="noc-group">
+                        <span class="noc-eyebrow">Prompt kütüphanesi</span>
+                        @foreach (var prompt in DraftPrompts)
+                        {
+                            <button type="button"
+                                    class="@("noc-prompt" + (SelectedPrompt == prompt ? " is-active" : ""))"
+                                    @onclick="() => SelectPrompt(prompt)">
+                                <span class="noc-prompt-title">@prompt.Title</span>
+                            </button>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="noc-group noc-group-lg">
+                        <span class="noc-eyebrow">Aktarım tercihleri</span>
+
+                        <DxCheckBox @bind-Checked="_keepCriteriaAsIs" CssClass="noc-check">
+                            Girilen kriter paraphrase edilmeden aktarılsın.
+                        </DxCheckBox>
+
+                        <DxCheckBox @bind-Checked="_keepDraftAsIs" CssClass="noc-check">
+                            Bulgu taslağı paraphrase edilmeden aktarılsın.
+                        </DxCheckBox>
+
+                        <div class="noc-rule"></div>
+
+                        <span class="noc-eyebrow">AI'ın üreteceği alanlar</span>
+                        <div class="noc-tags">
+                            @foreach (var f in GeneratedFields)
+                            {
+                                <span class="tag tag-outline">@f</span>
+                            }
+                        </div>
+                    </div>
+                }
+
+                <div class="noc-spacer"></div>
+                <p class="noc-note">AI çıktıları taslaktır; rapora aktarılmadan önce müfettiş onayı gerekir.</p>
+            </aside>
+
+            <main class="noc-main">
+                @if (_mode == WorkspaceMode.Prompts)
+                {
+                    <div class="noc-cols">
+
+                        @* ---------- Sol sütun: metin + prompt ---------- *@
+                        <section class="noc-col noc-col-input">
+
+                            <div>
+                                <h1 class="noc-h1">Metin üzerinde AI kontrolü</h1>
+                                <p class="noc-sub">Metni girin, soldan bir prompt seçin, gerekirse promptu düzenleyip gönderin.</p>
+                            </div>
+
+                            @* --- Metin paneli: DxRichEdit --- *@
+                            <div class="noc-panel noc-panel-fill">
+                                <div class="noc-panel-head">
+                                    <span class="noc-panel-title">Metin</span>
+                                    <div class="noc-head-actions">
+                                        <DxButton Text="📂 Bulgu Seç"
+                                                  RenderStyle="ButtonRenderStyle.None"
+                                                  CssClass="btn btn-secondary btn-sm"
+                                                  Click="@(() => { findingPopupVisible = true; })" />
+                                    </div>
+                                </div>
+
+                                <DxRichEdit @ref="_richEdit"
+                                            CssClass="noc-paper"
+                                            ViewType="ViewType.Simple" />
+                            </div>
+
+                            @* --- Prompt paneli --- *@
+                            <div class="noc-panel">
+                                <div class="noc-panel-head">
+                                    <span class="noc-panel-title">Prompt</span>
+                                    <span class="noc-panel-accent">@SelectedPrompt?.Title</span>
+                                </div>
+
+                                <DxMemo @bind-Text="CustomPrompt"
+                                        CssClass="noc-memo noc-memo-sm"
+                                        NullText="Soldan bir prompt seçin — burada görünecek ve düzenleyebileceksiniz."
+                                        ResizeMode="MemoResizeMode.Disabled"
+                                        BindValueMode="BindValueMode.OnInput" />
+                            </div>
+
+                            <div class="noc-actions">
+                                <DxButton RenderStyle="ButtonRenderStyle.None"
+                                          CssClass="btn btn-primary"
+                                          Enabled="@CanSend"
+                                          Click="SendToVlmAsync"
+                                          Text="@(_isLoading ? "Gönderiliyor…" : "AI'a gönder")" />
+                                <div class="noc-spacer"></div>
+                                <span class="noc-panel-meta">Çıktı: @SelectedLanguage</span>
+                            </div>
+                        </section>
+
+                        @* ---------- Sürükleme tutamacı: sola çekince önizleme genişler ---------- *@
+                        <div class="noc-resizer" role="separator" aria-orientation="vertical" tabindex="0"
+                             title="Sürükleyerek genişlet · çift tıkla sıfırla · ← → tuşları"></div>
+
+                        @* ---------- Sağ sütun: AI sonucu ---------- *@
+                        <section class="noc-col noc-col-preview">
+
+                            <div class="noc-col-head">
+                                <h2 class="noc-h2">AI sonucu</h2>
+                                <div class="noc-head-actions">
+                                    <span class="noc-panel-meta">@_loadingMessage</span>
+                                </div>
+                            </div>
+
+                            <div class="@("noc-result" + (_isLoading || string.IsNullOrWhiteSpace(MarkdownResult) ? " is-placeholder" : ""))">
+                                @if (_isLoading)
+                                {
+                                    <div class="noc-skeleton">
+                                        @foreach (var w in new[] { 70, 96, 84, 60 })
+                                        {
+                                            <div class="noc-skeleton-line" style="width:@(w)%"></div>
+                                        }
+                                    </div>
+                                }
+                                else if (!string.IsNullOrWhiteSpace(MarkdownResult))
+                                {
+                                    <div class="noc-result-body">
+                                        @((MarkupString)RenderMarkdown(MarkdownResult))
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="noc-empty">
+                                        <p style="margin:0">
+                                            Sonuç burada görünecek.<br />
+                                            Prompt seçip <span class="noc-accent">AI'a gönder</span>'e basın.
+                                        </p>
+                                    </div>
+                                }
+                            </div>
+
+                            <div class="noc-actions">
+                                <DxButton RenderStyle="ButtonRenderStyle.None"
+                                          CssClass="btn btn-secondary"
+                                          Enabled="@(!string.IsNullOrWhiteSpace(MarkdownResult))"
+                                          Click="CopyResultAsync"
+                                          Text="@(_copied ? "Kopyalandı" : "Sonucu kopyala")" />
+                            </div>
+                        </section>
+                    </div>
+                }
+                else
+                {
+                    <div class="noc-cols">
+                        <section class="noc-col noc-col-input">
+                            <div>
+                                <h1 class="noc-h1">Bulgu tablosu oluştur</h1>
+                                <p class="noc-sub">Kriter ve bulgu taslağını girin, AI şablondaki alanları doldurur.</p>
+                            </div>
+
+                            <div class="noc-panel">
+                                <div class="noc-panel-head">
+                                    <span class="noc-panel-title">Kriter</span>
+                                    <span class="noc-panel-meta">Mevzuat, prosedür maddesi vb.</span>
+                                </div>
+                                <DxMemo @bind-Text="_criterion"
+                                        NullText="Örn. Bankacılık Kanunu md. 23 / İç Kontrol Prosedürü 4.2 — ilgili maddenin metni…"
+                                        CssClass="noc-memo noc-memo-md"
+                                        ResizeMode="MemoResizeMode.Disabled"
+                                        BindValueMode="BindValueMode.OnInput" />
+                            </div>
+
+                            @* --- Metin paneli: DxRichEdit --- *@
+                            <div class="noc-panel noc-panel-fill">
+                                <div class="noc-panel-head">
+                                    <span class="noc-panel-title">Metin</span>
+                                    <div class="noc-head-actions">
+                                        <DxButton Text="📂 Bulgu Seç"
+                                                  RenderStyle="ButtonRenderStyle.None"
+                                                  CssClass="btn btn-secondary btn-sm"
+                                                  Click="@(() => { findingPopupVisible = true; })" />
+                                    </div>
+                                </div>
+
+                                <DxRichEdit @ref="_richEdit"
+                                            CssClass="noc-paper"
+                                            ViewType="ViewType.Simple" />
+                            </div>
+
+                            <div class="noc-actions">
+                                <DxButton RenderStyle="ButtonRenderStyle.None"
+                                          CssClass="btn btn-primary"
+                                          Click="SendToVlmAsync"
+                                          Text="@(_isLoading ? "Oluşturuluyor…" : "AI ile oluştur")" />
+                                <DxButton RenderStyle="ButtonRenderStyle.None"
+                                          CssClass="btn btn-ghost"
+                                          Click="ClearFinding"
+                                          Text="Alanları temizle" />
+                                <div class="noc-spacer"></div>
+                            </div>
+                        </section>
+
+                        @* ---------- Sürükleme tutamacı ---------- *@
+                        <div class="noc-resizer" role="separator" aria-orientation="vertical" tabindex="0"
+                             title="Sürükleyerek genişlet · çift tıkla sıfırla · ← → tuşları"></div>
+
+                        <section class="noc-col noc-col-table">
+                            <div class="noc-col-head">
+                                <h2 class="noc-h2">Önizleme</h2>
+                                <div class="noc-head-actions">
+                                    <span class="noc-panel-meta">@_loadingMessage</span>
+                                </div>
+                            </div>
+
+                            @* //14.09 update — Risk taksonomisi (L1-L4) ve kök neden (L1-L2) için
+                               bağlı (cascading) dropdown kartı. AI'ın seçtiği dal buraya yüklenir;
+                               müfettiş Word'e inmeden burada düzeltebilir. *@
+                            @if (_finding is not null && !_isLoading)
+                            {
+                                <div class="noc-panel noc-tax">
+                                    <div class="noc-panel-head">
+                                        <span class="noc-panel-title">Taksonomi seçimi</span>
+                                        <span class="@("noc-tax-badge" + (IsTaxonomyEdited ? " is-edited" : ""))">
+                                            @(IsTaxonomyEdited ? "Müfettiş değişikliği" : "AI önerisi")
+                                        </span>
+                                    </div>
+
+                                    <div class="noc-tax-body">
+                                        <div class="noc-tax-group">
+                                            <span class="noc-eyebrow">Risk taksonomisi</span>
+                                            <p class="noc-tax-path">@(RiskPathText.Length > 0 ? RiskPathText : "Seçim tamamlanmadı")</p>
+                                            <div class="noc-tax-selects">
+                                                @for (var i = 0; i < RiskLevelLabels.Length; i++)
+                                                {
+                                                    var level = i;
+                                                    <label class="noc-tax-field">
+                                                        <span class="noc-tax-label">@RiskLevelLabels[level]</span>
+                                                        <select class="noc-select"
+                                                                disabled="@(level > 0 && string.IsNullOrEmpty(_riskPath.ElementAtOrDefault(level - 1)))"
+                                                                value="@_riskPath.ElementAtOrDefault(level)"
+                                                                @onchange="e => SetRiskLevel(level, e.Value?.ToString())">
+                                                            <option value="">Seçiniz…</option>
+                                                            @foreach (var opt in RiskOptions(level))
+                                                            {
+                                                                <option value="@opt">@opt</option>
+                                                            }
+                                                        </select>
+                                                    </label>
+                                                }
+                                            </div>
+                                        </div>
+
+                                        <div class="noc-rule"></div>
+
+                                        <div class="noc-tax-group">
+                                            <span class="noc-eyebrow">Kök neden</span>
+                                            <p class="noc-tax-path">@(RootCausePathText.Length > 0 ? RootCausePathText : "Seçim tamamlanmadı")</p>
+                                            <div class="noc-tax-selects">
+                                                @for (var i = 0; i < RootCauseLevelLabels.Length; i++)
+                                                {
+                                                    var level = i;
+                                                    <label class="noc-tax-field">
+                                                        <span class="noc-tax-label">@RootCauseLevelLabels[level]</span>
+                                                        <select class="noc-select"
+                                                                disabled="@(level > 0 && string.IsNullOrEmpty(_rootCausePath.ElementAtOrDefault(level - 1)))"
+                                                                value="@_rootCausePath.ElementAtOrDefault(level)"
+                                                                @onchange="e => SetRootCauseLevel(level, e.Value?.ToString())">
+                                                            <option value="">Seçiniz…</option>
+                                                            @foreach (var opt in RootCauseOptions(level))
+                                                            {
+                                                                <option value="@opt">@opt</option>
+                                                            }
+                                                        </select>
+                                                    </label>
+                                                }
+                                            </div>
+                                        </div>
+
+                                        @if (IsTaxonomyEdited)
+                                        {
+                                            <button type="button" class="noc-linkbtn" @onclick="ResetTaxonomyToAi">AI seçimine dön</button>
+                                        }
+                                    </div>
+                                </div>
+                            }
+
+                            <div class="@("noc-result" + (_isLoading || string.IsNullOrWhiteSpace(MarkdownResult) ? " is-placeholder" : ""))">
+                                @if (_isLoading)
+                                {
+                                    <div class="noc-table-skeleton">
+                                        @foreach (var w in new[] { 40, 90, 90, 70, 85, 55, 80 })
+                                        {
+                                            <div class="noc-skeleton-line" style="width:@(w)%"></div>
+                                        }
+                                    </div>
+                                }
+                                else if (!string.IsNullOrWhiteSpace(MarkdownResult))
+                                {
+                                    <div class="noc-result-body">
+                                        @((MarkupString)RenderMarkdown(MarkdownResult))
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="noc-empty">
+                                        <p style="margin:0">
+                                            Şablon önizlemesi.<br />
+                                            Kriter ve taslağı girip <span class="noc-accent">AI ile oluştur</span>'a basın.
+                                        </p>
+                                    </div>
+                                }
+                            </div>
+
+                            @* //14.09 update — indirme satırı sarmalı; uyarı/ipucu butonun altında kendi satırında *@
+                            <div class="noc-actions noc-actions-wrap">
+                                <DxButton RenderStyle="ButtonRenderStyle.None"
+                                          CssClass="btn btn-primary"
+                                          Enabled="@(_finding is not null && !_isLoading)"
+                                          Click="DownloadDocxAsync"
+                                          Text="Word olarak indir (.docx)" />
+                                @if (_finding is not null && !_isLoading)
+                                {
+                                    <span class="@("noc-export-hint" + (_exportWarn ? " is-warn" : ""))">
+                                        @(_exportWarn
+                                            ? "Taksonomi ve kök neden seçimini tamamlayın."
+                                            : "Seçili dal ve geçerli alternatifleri Word dosyasına referans olarak eklenir.")
+                                    </span>
+                                }
+                            </div>
+                        </section>
+                    </div>
+                }
+            </main>
+        </div>
+    </div>
+
+    <FindingPopup @bind-Visible="findingPopupVisible"
+                  Kullanici="@_global.User_Kullanici"
+                  OnSelected="OnFindingSelectedAsync" />
+}
+
+@code {
+    //14.09 update — Bağlı liste (cascading) taksonomi verisi ve durum yönetimi.
+    // Mevcut @code bloğunuza EKLEYİN; aşağıdaki üyeler dışındaki kodunuz aynen kalır.
+
+    // Risk taksonomisi: L1 > L2 > L3 > L4
+    private static readonly string[] RiskLevelLabels =
+        { "Ana risk (L1)", "Alt risk (L2)", "Risk türü (L3)", "Detay (L4)" };
+
+    private static readonly string[] RootCauseLevelLabels =
+        { "Kök neden (L1)", "Alt kök neden (L2)" };
+
+    // L1 -> L2 -> L3 -> L4 listesi. Kaynak tablo değiştiğinde yalnızca burası güncellenir.
+    private static readonly Dictionary<string, Dictionary<string, Dictionary<string, string[]>>> RiskTaxonomy = new()
+    {
+        ["Kredi Riski"] = new()
+        {
+            ["Tahsis"] = new()
+            {
+                ["Belgelendirme"] = new[] { "Gelir belgesi eksikliği", "Belge tarihi uygunsuzluğu", "Kimlik/adres belgesi eksikliği" },
+                ["Limit ve yetki"] = new[] { "Yetki aşımı", "Limit güncellemesi yapılmaması" },
+                ["Değerlendirme"] = new[] { "Ödeme gücü analizi yetersizliği", "Mali tablo doğrulanmaması" }
+            },
+            ["İzleme"] = new()
+            {
+                ["Erken uyarı"] = new[] { "Sinyallerin değerlendirilmemesi", "Gecikmeli aksiyon" },
+                ["Yeniden yapılandırma"] = new[] { "Kriter dışı yapılandırma" }
+            },
+            ["Teminat"] = new()
+            {
+                ["Değerleme"] = new[] { "Güncel olmayan ekspertiz", "Değerleme yöntemi uygunsuzluğu" },
+                ["Tesis ve takip"] = new[] { "Teminat tesis edilmemesi" }
+            }
+        },
+        ["Operasyonel Risk"] = new()
+        {
+            ["Süreç uygulama"] = new()
+            {
+                ["Kontrol adımı"] = new[] { "İkincil doğrulama yokluğu", "Kontrolün atlanması" },
+                ["Kayıt ve mutabakat"] = new[] { "Mutabakat yapılmaması" }
+            },
+            ["Sistem ve teknoloji"] = new()
+            {
+                ["Uygulama kontrolleri"] = new[] { "Sistemsel bloke tanımlanmaması", "Hatalı parametre" },
+                ["Yetkilendirme"] = new[] { "Görevler ayrılığı ihlali" }
+            },
+            ["Dış kaynak"] = new()
+            {
+                ["Tedarikçi yönetimi"] = new[] { "Hizmet seviyesi takip edilmemesi" }
+            }
+        },
+        ["Uyum Riski"] = new()
+        {
+            ["Mevzuata uyum"] = new()
+            {
+                ["Düzenleyici raporlama"] = new[] { "Süresinde bildirim yapılmaması" },
+                ["Tüketici mevzuatı"] = new[] { "Bilgilendirme yükümlülüğü" }
+            },
+            ["Suç gelirlerinin aklanması"] = new()
+            {
+                ["Müşterini tanı"] = new[] { "Kimlik tespiti eksikliği", "Şüpheli işlem bildirimi" }
+            }
+        },
+        ["Piyasa Riski"] = new()
+        {
+            ["Faiz oranı"] = new() { ["Yeniden fiyatlama"] = new[] { "Vade uyumsuzluğu" } },
+            ["Kur"] = new() { ["Pozisyon yönetimi"] = new[] { "Limit dışı pozisyon" } }
+        }
+    };
+
+    private static readonly Dictionary<string, string[]> RootCauseTaxonomy = new()
+    {
+        ["Süreç ve kontrol tasarımı"] = new[] { "Kontrol tanımlanmamış", "Kontrol tasarımı yetersiz", "Süreç dokümantasyonu güncel değil" },
+        ["Sistem ve teknoloji"] = new[] { "Sistemsel engelleyici kontrol yok", "Sistem parametresi hatalı", "Entegrasyon eksikliği" },
+        ["İnsan kaynaklı"] = new[] { "Farkındalık/eğitim eksikliği", "İş yükü kaynaklı atlama", "Talimatın yanlış yorumlanması" },
+        ["Yönetişim"] = new[] { "Görev ve sorumluluk belirsizliği", "Gözetim ve raporlama zayıflığı" }
+    };
+
+    private List<string> _riskPath = new();       // müfettişin güncel seçimi
+    private List<string> _rootCausePath = new();
+    private List<string> _aiRiskPath = new();     // AI'ın önerdiği dal (geri dönüş için)
+    private List<string> _aiRootCausePath = new();
+    private bool _exportWarn;
+
+    private string RiskPathText => string.Join(" › ", _riskPath.Where(x => !string.IsNullOrEmpty(x)));
+    private string RootCausePathText => string.Join(" › ", _rootCausePath.Where(x => !string.IsNullOrEmpty(x)));
+
+    private bool IsTaxonomyComplete =>
+        _riskPath.Count == RiskLevelLabels.Length && _rootCausePath.Count == RootCauseLevelLabels.Length;
+
+    private bool IsTaxonomyEdited =>
+        !_riskPath.SequenceEqual(_aiRiskPath) || !_rootCausePath.SequenceEqual(_aiRootCausePath);
+
+    // Verilen seviyede, üst seçimlere göre geçerli seçenekler
+    private IEnumerable<string> RiskOptions(int level)
+    {
+        if (level == 0) return RiskTaxonomy.Keys;
+        var l1 = _riskPath.ElementAtOrDefault(0);
+        if (string.IsNullOrEmpty(l1) || !RiskTaxonomy.TryGetValue(l1, out var l2Map)) return Array.Empty<string>();
+        if (level == 1) return l2Map.Keys;
+
+        var l2 = _riskPath.ElementAtOrDefault(1);
+        if (string.IsNullOrEmpty(l2) || !l2Map.TryGetValue(l2, out var l3Map)) return Array.Empty<string>();
+        if (level == 2) return l3Map.Keys;
+
+        var l3 = _riskPath.ElementAtOrDefault(2);
+        if (string.IsNullOrEmpty(l3) || !l3Map.TryGetValue(l3, out var l4)) return Array.Empty<string>();
+        return l4;
+    }
+
+    private IEnumerable<string> RootCauseOptions(int level)
+    {
+        if (level == 0) return RootCauseTaxonomy.Keys;
+        var l1 = _rootCausePath.ElementAtOrDefault(0);
+        return !string.IsNullOrEmpty(l1) && RootCauseTaxonomy.TryGetValue(l1, out var l2)
+            ? l2
+            : Array.Empty<string>();
+    }
+
+    // Bir seviye değişince alt seviyeler temizlenir — geçersiz kombinasyon oluşamaz.
+    private void SetRiskLevel(int level, string? value)
+    {
+        _riskPath = _riskPath.Take(level).ToList();
+        if (!string.IsNullOrEmpty(value)) _riskPath.Add(value);
+        _exportWarn = false;
+    }
+
+    private void SetRootCauseLevel(int level, string? value)
+    {
+        _rootCausePath = _rootCausePath.Take(level).ToList();
+        if (!string.IsNullOrEmpty(value)) _rootCausePath.Add(value);
+        _exportWarn = false;
+    }
+
+    private void ResetTaxonomyToAi()
+    {
+        _riskPath = _aiRiskPath.ToList();
+        _rootCausePath = _aiRootCausePath.ToList();
+        _exportWarn = false;
+    }
+
+    // AI çıktısı geldiğinde çağırın: model metnini bilinen listeye eşler, eşleşmeyeni atlar.
+    private void ApplyAiTaxonomy(string? riskRaw, string? rootCauseRaw)
+    {
+        _aiRiskPath = MatchPath(riskRaw, RiskLevelLabels.Length, RiskOptionsFor);
+        _aiRootCausePath = MatchPath(rootCauseRaw, RootCauseLevelLabels.Length, RootCauseOptionsFor);
+        _riskPath = _aiRiskPath.ToList();
+        _rootCausePath = _aiRootCausePath.ToList();
+        _exportWarn = false;
+    }
+
+    private IEnumerable<string> RiskOptionsFor(List<string> parent)
+    {
+        var saved = _riskPath;
+        _riskPath = parent;
+        var result = RiskOptions(parent.Count).ToList();
+        _riskPath = saved;
+        return result;
+    }
+
+    private IEnumerable<string> RootCauseOptionsFor(List<string> parent)
+    {
+        var saved = _rootCausePath;
+        _rootCausePath = parent;
+        var result = RootCauseOptions(parent.Count).ToList();
+        _rootCausePath = saved;
+        return result;
+    }
+
+    // "Kredi Riski > Tahsis > ..." gibi serbest metni seviye seviye listeye oturtur.
+    private static List<string> MatchPath(string? raw, int levels, Func<List<string>, IEnumerable<string>> optionsFor)
+    {
+        var parts = (raw ?? string.Empty)
+            .Split(new[] { '›', '>', '|', '/', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Trim())
+            .ToList();
+
+        var path = new List<string>();
+        for (var i = 0; i < levels; i++)
+        {
+            var options = optionsFor(path).ToList();
+            var candidate = parts.ElementAtOrDefault(i);
+            var match = options.FirstOrDefault(o =>
+                             string.Equals(o, candidate, StringComparison.OrdinalIgnoreCase))
+                        ?? options.FirstOrDefault(o =>
+                             !string.IsNullOrEmpty(candidate) &&
+                             o.Contains(candidate!, StringComparison.OrdinalIgnoreCase));
+            if (match is null) break;
+            path.Add(match);
+        }
+        return path;
+    }
+
+    // Word'e eklenecek referans: seçilen dalın her seviyesi + o seviyedeki diğer geçerli seçenekler.
+    private string BuildTaxonomyAppendixHtml()
+    {
+        string Section(string title, string[] labels, List<string> path, Func<List<string>, IEnumerable<string>> optionsFor)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append("<p style='font-size:9pt;margin:14px 0 4px'><b>").Append(title).Append("</b></p>");
+            for (var i = 0; i < labels.Length; i++)
+            {
+                var parent = path.Take(i).ToList();
+                var siblings = optionsFor(parent).Where(o => o != path.ElementAtOrDefault(i)).ToList();
+                sb.Append("<p style='font-size:8.5pt;margin:0 0 3px'><b>").Append(labels[i]).Append(":</b> ")
+                  .Append(path.ElementAtOrDefault(i) ?? "—");
+                if (siblings.Count > 0)
+                    sb.Append(" <span style='color:#666'>(diğer seçenekler: ")
+                      .Append(string.Join(", ", siblings)).Append(")</span>");
+                sb.Append("</p>");
+            }
+            return sb.ToString();
+        }
+
+        return "<hr/><p style='font-size:9pt'><b>Bağlı liste referansı</b> — seçilen dalın her seviyesindeki "
+             + "geçerli alternatifler. Word'de elle düzenlerken bu listenin dışına çıkmayın.</p>"
+             + Section("Risk taksonomisi", RiskLevelLabels, _riskPath, RiskOptionsFor)
+             + Section("Kök neden", RootCauseLevelLabels, _rootCausePath, RootCauseOptionsFor);
+    }
+
+    // DownloadDocxAsync içinde, dosyayı üretmeden ÖNCE çağırın:
+    //   if (!GuardTaxonomyBeforeExport()) return;
+    // ve tablo HTML'inin sonuna BuildTaxonomyAppendixHtml() ekleyin.
+    private bool GuardTaxonomyBeforeExport()
+    {
+        if (IsTaxonomyComplete) { _exportWarn = false; return true; }
+        _exportWarn = true;
+        StateHasChanged();
+        return false;
+    }
+
+    // ⚠ Mevcut @code bloğunuzu buraya AYNEN yapıştırın.
+    // Panel genişletme için eklenen tek metot (mevcut OnAfterRenderAsync varsa
+    // sadece içindeki InvokeVoidAsync satırını kopyalayın):
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // firstRender KONTROLÜ YOK: sekme (_mode) değişince yeni tutamaç oluşur,
+        // initResize idempotenttir (aynı tutamaca ikinci kez bağlanmaz).
+        await JS.InvokeVoidAsync("auditAgent.initResize");
+    }
+}
+
+@* _Host.cshtml / index.html içine bir kez:
+   <script src="js/panelResize.js"></script>  *@
