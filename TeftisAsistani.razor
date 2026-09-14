@@ -277,22 +277,40 @@
                                 </div>
                             </div>
 
-                            @* //14.09 update — Risk taksonomisi (L1-L4) ve kök neden (L1-L2) için
-                               bağlı (cascading) dropdown kartı. AI'ın seçtiği dal buraya yüklenir;
-                               müfettiş Word'e inmeden burada düzeltebilir. *@
-                            @if (_finding is not null && !_isLoading)
-                            {
-                                <div class="noc-panel noc-tax">
-                                    <div class="noc-panel-head">
-                                        <span class="noc-panel-title">Taksonomi seçimi</span>
-                                        <span class="@("noc-tax-badge" + (IsTaxonomyEdited ? " is-edited" : ""))">
-                                            @(IsTaxonomyEdited ? "Müfettiş değişikliği" : "AI önerisi")
-                                        </span>
-                                    </div>
+                            @* 14.09 vers1 silinecek — başlangıç
+                               (v1'de taksonomi kartı önizleme panelinin DIŞINDA burada duruyordu;
+                               artık noc-result içinde render ediliyor — bu not silinebilir)
+                               14.09 vers1 silinecek — bitiş *@
 
-                                    <div class="noc-tax-body">
+                            <div class="@("noc-result" + (_isLoading || string.IsNullOrWhiteSpace(MarkdownResult) ? " is-placeholder" : ""))">
+                                @if (_isLoading)
+                                {
+                                    <div class="noc-table-skeleton">
+                                        @foreach (var w in new[] { 40, 90, 90, 70, 85, 55, 80 })
+                                        {
+                                            <div class="noc-skeleton-line" style="width:@(w)%"></div>
+                                        }
+                                    </div>
+                                }
+                                else if (!string.IsNullOrWhiteSpace(MarkdownResult))
+                                {
+                                    @* 14.09 vers2 — başlangıç: bağlı liste kartı önizlemenin içinde,
+                                       tablonun üstünde. Seçim değişince RefreshPreviewFromTaxonomy()
+                                       önizleme HTML'ini yeniden üretir. *@
+                                    <div class="noc-tax-inline">
+                                        <div class="noc-tax-head">
+                                            <span class="noc-tax-title">Taksonomi seçimi</span>
+                                            <span class="@("noc-tax-badge" + (IsTaxonomyEdited ? " is-edited" : ""))">
+                                                @(IsTaxonomyEdited ? "Müfettiş değişikliği" : "AI önerisi")
+                                            </span>
+                                            @if (IsTaxonomyEdited)
+                                            {
+                                                <button type="button" class="noc-linkbtn" @onclick="ResetTaxonomyToAi">AI seçimine dön</button>
+                                            }
+                                        </div>
+
                                         <div class="noc-tax-group">
-                                            <span class="noc-eyebrow">Risk taksonomisi</span>
+                                            <span class="noc-tax-kind">Risk taksonomisi</span>
                                             <p class="noc-tax-path">@(RiskPathText.Length > 0 ? RiskPathText : "Seçim tamamlanmadı")</p>
                                             <div class="noc-tax-selects">
                                                 @for (var i = 0; i < RiskLevelLabels.Length; i++)
@@ -315,10 +333,8 @@
                                             </div>
                                         </div>
 
-                                        <div class="noc-rule"></div>
-
                                         <div class="noc-tax-group">
-                                            <span class="noc-eyebrow">Kök neden</span>
+                                            <span class="noc-tax-kind">Kök neden</span>
                                             <p class="noc-tax-path">@(RootCausePathText.Length > 0 ? RootCausePathText : "Seçim tamamlanmadı")</p>
                                             <div class="noc-tax-selects">
                                                 @for (var i = 0; i < RootCauseLevelLabels.Length; i++)
@@ -340,27 +356,9 @@
                                                 }
                                             </div>
                                         </div>
-
-                                        @if (IsTaxonomyEdited)
-                                        {
-                                            <button type="button" class="noc-linkbtn" @onclick="ResetTaxonomyToAi">AI seçimine dön</button>
-                                        }
                                     </div>
-                                </div>
-                            }
+                                    @* 14.09 vers2 — bitiş *@
 
-                            <div class="@("noc-result" + (_isLoading || string.IsNullOrWhiteSpace(MarkdownResult) ? " is-placeholder" : ""))">
-                                @if (_isLoading)
-                                {
-                                    <div class="noc-table-skeleton">
-                                        @foreach (var w in new[] { 40, 90, 90, 70, 85, 55, 80 })
-                                        {
-                                            <div class="noc-skeleton-line" style="width:@(w)%"></div>
-                                        }
-                                    </div>
-                                }
-                                else if (!string.IsNullOrWhiteSpace(MarkdownResult))
-                                {
                                     <div class="noc-result-body">
                                         @((MarkupString)RenderMarkdown(MarkdownResult))
                                     </div>
@@ -376,7 +374,7 @@
                                 }
                             </div>
 
-                            @* //14.09 update — indirme satırı sarmalı; uyarı/ipucu butonun altında kendi satırında *@
+                            @* 14.09 vers2 — başlangıç: indirme satırı sarmalı; uyarı/ipucu butonun altında *@
                             <div class="noc-actions noc-actions-wrap">
                                 <DxButton RenderStyle="ButtonRenderStyle.None"
                                           CssClass="btn btn-primary"
@@ -392,6 +390,7 @@
                                     </span>
                                 }
                             </div>
+                            @* 14.09 vers2 — bitiş *@
                         </section>
                     </div>
                 }
@@ -405,7 +404,7 @@
 }
 
 @code {
-    //14.09 update — Bağlı liste (cascading) taksonomi verisi ve durum yönetimi.
+    // 14.09 vers2 — başlangıç: bağlı liste (cascading) taksonomi seçimi.
     // Mevcut @code bloğunuza EKLEYİN; aşağıdaki üyeler dışındaki kodunuz aynen kalır.
 
     // Risk taksonomisi: L1 > L2 > L3 > L4
@@ -415,75 +414,29 @@
     private static readonly string[] RootCauseLevelLabels =
         { "Kök neden (L1)", "Alt kök neden (L2)" };
 
-    // L1 -> L2 -> L3 -> L4 listesi. Kaynak tablo değiştiğinde yalnızca burası güncellenir.
-    private static readonly Dictionary<string, Dictionary<string, Dictionary<string, string[]>>> RiskTaxonomy = new()
-    {
-        ["Kredi Riski"] = new()
-        {
-            ["Tahsis"] = new()
-            {
-                ["Belgelendirme"] = new[] { "Gelir belgesi eksikliği", "Belge tarihi uygunsuzluğu", "Kimlik/adres belgesi eksikliği" },
-                ["Limit ve yetki"] = new[] { "Yetki aşımı", "Limit güncellemesi yapılmaması" },
-                ["Değerlendirme"] = new[] { "Ödeme gücü analizi yetersizliği", "Mali tablo doğrulanmaması" }
-            },
-            ["İzleme"] = new()
-            {
-                ["Erken uyarı"] = new[] { "Sinyallerin değerlendirilmemesi", "Gecikmeli aksiyon" },
-                ["Yeniden yapılandırma"] = new[] { "Kriter dışı yapılandırma" }
-            },
-            ["Teminat"] = new()
-            {
-                ["Değerleme"] = new[] { "Güncel olmayan ekspertiz", "Değerleme yöntemi uygunsuzluğu" },
-                ["Tesis ve takip"] = new[] { "Teminat tesis edilmemesi" }
-            }
-        },
-        ["Operasyonel Risk"] = new()
-        {
-            ["Süreç uygulama"] = new()
-            {
-                ["Kontrol adımı"] = new[] { "İkincil doğrulama yokluğu", "Kontrolün atlanması" },
-                ["Kayıt ve mutabakat"] = new[] { "Mutabakat yapılmaması" }
-            },
-            ["Sistem ve teknoloji"] = new()
-            {
-                ["Uygulama kontrolleri"] = new[] { "Sistemsel bloke tanımlanmaması", "Hatalı parametre" },
-                ["Yetkilendirme"] = new[] { "Görevler ayrılığı ihlali" }
-            },
-            ["Dış kaynak"] = new()
-            {
-                ["Tedarikçi yönetimi"] = new[] { "Hizmet seviyesi takip edilmemesi" }
-            }
-        },
-        ["Uyum Riski"] = new()
-        {
-            ["Mevzuata uyum"] = new()
-            {
-                ["Düzenleyici raporlama"] = new[] { "Süresinde bildirim yapılmaması" },
-                ["Tüketici mevzuatı"] = new[] { "Bilgilendirme yükümlülüğü" }
-            },
-            ["Suç gelirlerinin aklanması"] = new()
-            {
-                ["Müşterini tanı"] = new[] { "Kimlik tespiti eksikliği", "Şüpheli işlem bildirimi" }
-            }
-        },
-        ["Piyasa Riski"] = new()
-        {
-            ["Faiz oranı"] = new() { ["Yeniden fiyatlama"] = new[] { "Vade uyumsuzluğu" } },
-            ["Kur"] = new() { ["Pozisyon yönetimi"] = new[] { "Limit dışı pozisyon" } }
-        }
-    };
+    // 14.09 vers2 — Taksonomi kaynağı: hardcode liste YOK. Bağlı liste (cascading)
+    // seçenekleri RiskTaxonomyService'ten gelen düz satır listesinden türetilir.
+    // Satır modeli mevcut kodunuzdaki RiskTaxonomyRowModel (Level1..Level4).
+    private List<RiskTaxonomyRowModel> _riskRows = new();
+    private List<(string L1, string L2)> _rootCausePairs = new();
 
-    private static readonly Dictionary<string, string[]> RootCauseTaxonomy = new()
+    // OnInitializedAsync (veya ilk render) içinde bir kez çağırın.
+    private async Task LoadTaxonomySourcesAsync()
     {
-        ["Süreç ve kontrol tasarımı"] = new[] { "Kontrol tanımlanmamış", "Kontrol tasarımı yetersiz", "Süreç dokümantasyonu güncel değil" },
-        ["Sistem ve teknoloji"] = new[] { "Sistemsel engelleyici kontrol yok", "Sistem parametresi hatalı", "Entegrasyon eksikliği" },
-        ["İnsan kaynaklı"] = new[] { "Farkındalık/eğitim eksikliği", "İş yükü kaynaklı atlama", "Talimatın yanlış yorumlanması" },
-        ["Yönetişim"] = new[] { "Görev ve sorumluluk belirsizliği", "Gözetim ve raporlama zayıflığı" }
-    };
+        // TODO: servisinizde tüm satırları dönen metot adı farklıysa yalnızca bu satırı değiştirin.
+        _riskRows = (await RiskTaxonomyService.GetAllAsync(_db)) ?? new List<RiskTaxonomyRowModel>();
+
+        // TODO: RootCauseCatalog'da (L1, L2) listesi dönen üye adı farklıysa bu satırı değiştirin.
+        _rootCausePairs = RootCauseCatalog.All()
+            .Select(x => (L1: x.Level1, L2: x.Level2))
+            .Where(x => !string.IsNullOrWhiteSpace(x.L1) && !string.IsNullOrWhiteSpace(x.L2))
+            .Distinct()
+            .ToList();
+    }
 
     private List<string> _riskPath = new();       // müfettişin güncel seçimi
     private List<string> _rootCausePath = new();
-    private List<string> _aiRiskPath = new();     // AI'ın önerdiği dal (geri dönüş için)
+    private List<string> _aiRiskPath = new();     // AI'ın (Step 2) önerdiği dal — geri dönüş için
     private List<string> _aiRootCausePath = new();
     private bool _exportWarn;
 
@@ -496,38 +449,59 @@
     private bool IsTaxonomyEdited =>
         !_riskPath.SequenceEqual(_aiRiskPath) || !_rootCausePath.SequenceEqual(_aiRootCausePath);
 
-    // Verilen seviyede, üst seçimlere göre geçerli seçenekler
-    private IEnumerable<string> RiskOptions(int level)
+    // Satırın belirli seviyesini okur
+    private static string? LevelOf(RiskTaxonomyRowModel r, int level) => level switch
     {
-        if (level == 0) return RiskTaxonomy.Keys;
-        var l1 = _riskPath.ElementAtOrDefault(0);
-        if (string.IsNullOrEmpty(l1) || !RiskTaxonomy.TryGetValue(l1, out var l2Map)) return Array.Empty<string>();
-        if (level == 1) return l2Map.Keys;
+        0 => r.Level1,
+        1 => r.Level2,
+        2 => r.Level3,
+        _ => r.Level4
+    };
 
-        var l2 = _riskPath.ElementAtOrDefault(1);
-        if (string.IsNullOrEmpty(l2) || !l2Map.TryGetValue(l2, out var l3Map)) return Array.Empty<string>();
-        if (level == 2) return l3Map.Keys;
+    // Üst seviye seçimlerine uyan satırlar
+    private IEnumerable<RiskTaxonomyRowModel> RiskRowsMatching(IReadOnlyList<string> parent) =>
+        _riskRows.Where(r =>
+        {
+            for (var i = 0; i < parent.Count; i++)
+                if (!string.Equals(LevelOf(r, i), parent[i], StringComparison.Ordinal)) return false;
+            return true;
+        });
 
-        var l3 = _riskPath.ElementAtOrDefault(2);
-        if (string.IsNullOrEmpty(l3) || !l3Map.TryGetValue(l3, out var l4)) return Array.Empty<string>();
-        return l4;
-    }
+    // Verilen seviyede geçerli seçenekler — üst seçime göre filtreli, tekrarsız
+    private IEnumerable<string> RiskOptions(int level) => RiskOptionsFor(_riskPath.Take(level).ToList());
 
-    private IEnumerable<string> RootCauseOptions(int level)
-    {
-        if (level == 0) return RootCauseTaxonomy.Keys;
-        var l1 = _rootCausePath.ElementAtOrDefault(0);
-        return !string.IsNullOrEmpty(l1) && RootCauseTaxonomy.TryGetValue(l1, out var l2)
-            ? l2
-            : Array.Empty<string>();
-    }
+    private IEnumerable<string> RiskOptionsFor(List<string> parent) =>
+        RiskRowsMatching(parent)
+            .Select(r => LevelOf(r, parent.Count))
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Select(v => v!)
+            .Distinct()
+            .OrderBy(v => v, StringComparer.CurrentCulture);
+
+    private IEnumerable<string> RootCauseOptions(int level) => RootCauseOptionsFor(_rootCausePath.Take(level).ToList());
+
+    private IEnumerable<string> RootCauseOptionsFor(List<string> parent) =>
+        parent.Count == 0
+            ? _rootCausePairs.Select(p => p.L1).Distinct().OrderBy(v => v, StringComparer.CurrentCulture)
+            : _rootCausePairs.Where(p => p.L1 == parent[0]).Select(p => p.L2)
+                             .Distinct().OrderBy(v => v, StringComparer.CurrentCulture);
 
     // Bir seviye değişince alt seviyeler temizlenir — geçersiz kombinasyon oluşamaz.
     private void SetRiskLevel(int level, string? value)
     {
         _riskPath = _riskPath.Take(level).ToList();
         if (!string.IsNullOrEmpty(value)) _riskPath.Add(value);
+
+        // Tek dal kaldıysa alt seviyeleri otomatik tamamla (makrolu docm'deki davranış)
+        while (_riskPath.Count < RiskLevelLabels.Length)
+        {
+            var only = RiskOptions(_riskPath.Count).Take(2).ToList();
+            if (only.Count != 1) break;
+            _riskPath.Add(only[0]);
+        }
+
         _exportWarn = false;
+        RefreshPreviewFromTaxonomy();
     }
 
     private void SetRootCauseLevel(int level, string? value)
@@ -535,6 +509,7 @@
         _rootCausePath = _rootCausePath.Take(level).ToList();
         if (!string.IsNullOrEmpty(value)) _rootCausePath.Add(value);
         _exportWarn = false;
+        RefreshPreviewFromTaxonomy();
     }
 
     private void ResetTaxonomyToAi()
@@ -542,65 +517,66 @@
         _riskPath = _aiRiskPath.ToList();
         _rootCausePath = _aiRootCausePath.ToList();
         _exportWarn = false;
+        RefreshPreviewFromTaxonomy();
     }
 
-    // AI çıktısı geldiğinde çağırın: model metnini bilinen listeye eşler, eşleşmeyeni atlar.
-    private void ApplyAiTaxonomy(string? riskRaw, string? rootCauseRaw)
+    // 14.09 vers2 — Seçim tabloya bu metotla yansır: _finding güncellenir ve
+    // önizleme HTML'i aynı servisten (WordReportService) yeniden üretilir.
+    // Regex ile HTML yamalamak yok; Word çıktısı ile önizleme tek kaynaktan gelir.
+    private void RefreshPreviewFromTaxonomy()
     {
-        _aiRiskPath = MatchPath(riskRaw, RiskLevelLabels.Length, RiskOptionsFor);
-        _aiRootCausePath = MatchPath(rootCauseRaw, RootCauseLevelLabels.Length, RootCauseOptionsFor);
-        _riskPath = _aiRiskPath.ToList();
-        _rootCausePath = _aiRootCausePath.ToList();
-        _exportWarn = false;
+        if (_finding is null) return;
+
+        _finding.RiskL1 = _riskPath.ElementAtOrDefault(0);
+        _finding.RiskL2 = _riskPath.ElementAtOrDefault(1);
+        _finding.RiskL3 = _riskPath.ElementAtOrDefault(2);
+        _finding.RiskL4 = _riskPath.ElementAtOrDefault(3);
+
+        _finding.KokNeden = _rootCausePath.Count > 0 ? string.Join(" - ", _rootCausePath) : null;
+        if (_finding.KokNeden is not null) TaxonomyParser.ParseRootCause(_finding);
+
+        MarkdownResult = WordReportService.GeneratePreviewHtml(_finding);
+        StateHasChanged();
     }
 
-    private IEnumerable<string> RiskOptionsFor(List<string> parent)
+    // 14.09 vers2 — Step 2 sonrası çağırın (RunFindingAsync içinde, _finding atandıktan sonra):
+    //   SyncTaxonomyFromFinding();
+    // AI'ın çözdüğü L1..L4 ve kök neden, dropdown'ların başlangıç değeri olur.
+    private void SyncTaxonomyFromFinding()
     {
-        var saved = _riskPath;
-        _riskPath = parent;
-        var result = RiskOptions(parent.Count).ToList();
-        _riskPath = saved;
-        return result;
-    }
+        var risk = new[] { _finding?.RiskL1, _finding?.RiskL2, _finding?.RiskL3, _finding?.RiskL4 }
+            .TakeWhile(v => !string.IsNullOrWhiteSpace(v)).Select(v => v!).ToList();
 
-    private IEnumerable<string> RootCauseOptionsFor(List<string> parent)
-    {
-        var saved = _rootCausePath;
-        _rootCausePath = parent;
-        var result = RootCauseOptions(parent.Count).ToList();
-        _rootCausePath = saved;
-        return result;
-    }
-
-    // "Kredi Riski > Tahsis > ..." gibi serbest metni seviye seviye listeye oturtur.
-    private static List<string> MatchPath(string? raw, int levels, Func<List<string>, IEnumerable<string>> optionsFor)
-    {
-        var parts = (raw ?? string.Empty)
-            .Split(new[] { '›', '>', '|', '/', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+        var rc = (_finding?.KokNeden ?? string.Empty)
+            .Split(new[] { '›', '>', '|', '\n' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(p => p.Trim())
+            .Where(p => p.Length > 0)
             .ToList();
 
-        var path = new List<string>();
-        for (var i = 0; i < levels; i++)
+        // Kök neden tek metin geldiyse katalogdan L1/L2'ye oturt
+        if (rc.Count < 2)
         {
-            var options = optionsFor(path).ToList();
-            var candidate = parts.ElementAtOrDefault(i);
-            var match = options.FirstOrDefault(o =>
-                             string.Equals(o, candidate, StringComparison.OrdinalIgnoreCase))
-                        ?? options.FirstOrDefault(o =>
-                             !string.IsNullOrEmpty(candidate) &&
-                             o.Contains(candidate!, StringComparison.OrdinalIgnoreCase));
-            if (match is null) break;
-            path.Add(match);
+            var raw = _finding?.KokNeden?.Trim();
+            var hit = _rootCausePairs.FirstOrDefault(p =>
+                string.Equals(p.L2, raw, StringComparison.CurrentCultureIgnoreCase));
+            rc = hit.L2 is null ? new List<string>() : new List<string> { hit.L1, hit.L2 };
         }
-        return path;
+        else
+        {
+            rc = rc.Take(RootCauseLevelLabels.Length).ToList();
+        }
+
+        _aiRiskPath = risk;
+        _aiRootCausePath = rc;
+        _riskPath = risk.ToList();
+        _rootCausePath = rc.ToList();
+        _exportWarn = false;
     }
 
     // Word'e eklenecek referans: seçilen dalın her seviyesi + o seviyedeki diğer geçerli seçenekler.
     private string BuildTaxonomyAppendixHtml()
     {
-        string Section(string title, string[] labels, List<string> path, Func<List<string>, IEnumerable<string>> optionsFor)
-        {
+        string Section(string title, string[] labels, List<string> path, Func<List<string>, IEnumerable<string>> optionsFor)        {
             var sb = new System.Text.StringBuilder();
             sb.Append("<p style='font-size:9pt;margin:14px 0 4px'><b>").Append(title).Append("</b></p>");
             for (var i = 0; i < labels.Length; i++)
@@ -633,6 +609,7 @@
         StateHasChanged();
         return false;
     }
+    // 14.09 vers2 — bitiş
 
     // ⚠ Mevcut @code bloğunuzu buraya AYNEN yapıştırın.
     // Panel genişletme için eklenen tek metot (mevcut OnAfterRenderAsync varsa
